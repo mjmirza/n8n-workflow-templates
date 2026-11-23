@@ -1,0 +1,368 @@
+{
+  "name": "Unread email digest to Slack",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Morning email digest\n\n1. Attach Gmail, OpenAI, and Slack credentials.\n2. Set slackChannel in Config. Adjust gmailQuery if you do not want the default unread filter.\n3. The schedule runs every day at 08:00 in the n8n instance timezone. Use Manual Trigger to test.\n4. Messages stay unread. This workflow only summarizes them.",
+        "width": 400,
+        "height": 280,
+        "color": 4
+      },
+      "id": "26f19e49-0170-461e-805e-c47b6ce29e9e",
+      "name": "Setup notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -460,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 8,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "c3143420-df36-4420-b9de-f38d00499b58",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        260
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "c4d80e89-9856-4992-97c2-9fecc2a65d2f",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6f0ab3e4-3c93-4f88-baeb-2edb7dea0a04",
+              "name": "slackChannel",
+              "value": "email-digest",
+              "type": "string"
+            },
+            {
+              "id": "dc797d2f-77d3-42ad-8166-1466a058c011",
+              "name": "gmailQuery",
+              "value": "is:unread newer_than:1d -category:promotions -category:social",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "99e8fc11-ea51-49b2-8c59-fa84f41a22ff",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "getAll",
+        "returnAll": false,
+        "limit": 20,
+        "simple": true,
+        "filters": {
+          "q": "={{ $('Config').item.json.gmailQuery }}"
+        },
+        "options": {}
+      },
+      "id": "c16a4468-662b-4c55-9f71-a2d709846c40",
+      "name": "Get Unread",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        480,
+        340
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "997e340e-3d1a-4b94-a907-ca4fd144a1fa",
+              "leftValue": "={{ $json.id }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "d0b36dd1-95a5-488e-ab5f-f32bfd52b269",
+      "name": "Any messages?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        720,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "emails",
+        "include": "allFields",
+        "options": {}
+      },
+      "id": "ddfc0a4f-e2b1-428a-b520-e51111f19754",
+      "name": "Collect Messages",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        960,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const bundled = $input.first().json.emails || [];\nconst emails = bundled.filter((email) => email && email.id);\nconst lines = emails.slice(0, 20).map((email, index) => {\n  const from = String(email.from || email.From || 'unknown');\n  const subject = String(email.subject || '(no subject)');\n  const snippet = String(email.snippet || email.text || '').replace(/\\s+/g, ' ').slice(0, 400);\n  const date = String(email.date || '');\n  return (index + 1) + '. From: ' + from + '\\n   Date: ' + date + '\\n   Subject: ' + subject + '\\n   Snippet: ' + snippet;\n});\nreturn [{\n  json: {\n    emailCount: emails.length,\n    digestSource: lines.join('\\n\\n'),\n  },\n}];\n"
+      },
+      "id": "30c7afe8-715d-4de0-98bd-06cf5be7dab3",
+      "name": "Build Digest Source",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1180,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Write a morning inbox digest for a busy operator. Group related mail. Call out anything that needs a reply today, anything that looks like a receipt or a calendar change, and anything that can wait. Use short bullets. Do not invent facts that are not in the snippets. End with a count of messages covered.\n\n{{ $json.digestSource }}"
+      },
+      "id": "25e3f60f-1053-4e8b-b4c3-6dc8ac02a57d",
+      "name": "Summarize Inbox",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        1420,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "id": "3070abeb-7b4c-4259-839b-17802cd7cb51",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        1420,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "accessToken",
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "={{ $('Config').item.json.slackChannel }}"
+        },
+        "text": "=*Inbox digest* ({{ $('Build Digest Source').item.json.emailCount }} unread)\n\n{{ $json.text }}",
+        "otherOptions": {}
+      },
+      "id": "3ca845ed-7ca1-47c9-b15f-f4993a4bc4b9",
+      "name": "Post Digest",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        1680,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "accessToken",
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "={{ $('Config').item.json.slackChannel }}"
+        },
+        "text": "=Inbox digest: no unread mail matched the query in the last day.",
+        "otherOptions": {}
+      },
+      "id": "a64997ac-385b-47f6-81a8-2075e50963e1",
+      "name": "Post Empty Digest",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        960,
+        480
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Get Unread",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Unread": {
+      "main": [
+        [
+          {
+            "node": "Any messages?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any messages?": {
+      "main": [
+        [
+          {
+            "node": "Collect Messages",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Post Empty Digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Messages": {
+      "main": [
+        [
+          {
+            "node": "Build Digest Source",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Digest Source": {
+      "main": [
+        [
+          {
+            "node": "Summarize Inbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Summarize Inbox",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize Inbox": {
+      "main": [
+        [
+          {
+            "node": "Post Digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "active": false
+}
