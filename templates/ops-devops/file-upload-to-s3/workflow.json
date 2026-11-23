@@ -1,0 +1,222 @@
+{
+  "name": "File upload to S3",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Upload to S3\n\nPOST multipart field `file` to the webhook path `uploads`.\nOptional fields: source, note.\nSet the bucket name in Build object key.",
+        "height": 170,
+        "width": 440,
+        "color": 4
+      },
+      "id": "5a22ad0b-3cf3-5ce1-b0c5-6d5ac265c297",
+      "name": "Setup",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "uploads",
+        "authentication": "none",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "b28b8714-095e-5c23-a726-88d63f4c3549",
+      "name": "Upload webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "b28b8714-095e-5c23-a726-88d63f4c3549"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const item = items[0];\nconst binary = item.binary || {};\nconst file = binary.file;\nif (!file) {\n  return [{ json: { ok: false, error: 'Attach the file as multipart field \"file\".' } }];\n}\n\nconst bucket = 'incoming-uploads';\nconst form = (item.json && item.json.body) || {};\nconst source = String(form.source || 'webhook').replace(/[^a-zA-Z0-9._-]/g, '').slice(0, 40) || 'webhook';\nconst original = String(file.fileName || 'upload.bin');\nconst safeName = original.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120) || 'upload.bin';\nconst day = new Date().toISOString().slice(0, 10);\nconst key = 'uploads/' + day + '/' + source + '/' + Date.now() + '-' + safeName;\nconst contentType = String(file.mimeType || 'application/octet-stream').slice(0, 80);\nconst note = String(form.note || 'none').replace(/[^a-zA-Z0-9._ -]/g, '').slice(0, 200) || 'none';\n\nreturn [{\n  json: {\n    ok: true,\n    bucket,\n    key,\n    source,\n    originalFileName: safeName,\n    contentType,\n    note,\n  },\n  binary: { file },\n}];\n"
+      },
+      "id": "ad54036f-f949-5e21-955b-b29056650c5a",
+      "name": "Build object key",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "08085e1d-8391-56ec-8810-37f013b81859",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "edcd0016-3408-55a9-a61d-902c6e5bb4a1",
+      "name": "File present",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        760,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "upload",
+        "bucketName": "={{ $json.bucket }}",
+        "fileName": "={{ $json.key }}",
+        "binaryData": true,
+        "binaryPropertyName": "file",
+        "additionalFields": {
+          "acl": "private",
+          "storageClass": "standard"
+        },
+        "tagsUi": {
+          "tagsValues": [
+            {
+              "key": "source",
+              "value": "={{ $json.source }}"
+            },
+            {
+              "key": "original-filename",
+              "value": "={{ $json.originalFileName }}"
+            },
+            {
+              "key": "content-type",
+              "value": "={{ $json.contentType }}"
+            },
+            {
+              "key": "note",
+              "value": "={{ $json.note }}"
+            }
+          ]
+        }
+      },
+      "id": "50a63973-15d8-5d34-a870-d98d8228c790",
+      "name": "Upload to S3",
+      "type": "n8n-nodes-base.awsS3",
+      "typeVersion": 2,
+      "position": [
+        1020,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, bucket: $('Build object key').item.json.bucket, key: $('Build object key').item.json.key }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "0d74a3b8-adf8-586c-b5da-54d693d92bb2",
+      "name": "Respond 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1280,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"ok\": false,\n  \"error\": \"multipart field file is required\"\n}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "72f73fdd-ac51-5cde-8383-463b9e04b4ee",
+      "name": "Respond 400",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1020,
+        460
+      ]
+    }
+  ],
+  "connections": {
+    "Upload webhook": {
+      "main": [
+        [
+          {
+            "node": "Build object key",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build object key": {
+      "main": [
+        [
+          {
+            "node": "File present",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "File present": {
+      "main": [
+        [
+          {
+            "node": "Upload to S3",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 400",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload to S3": {
+      "main": [
+        [
+          {
+            "node": "Respond 200",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
