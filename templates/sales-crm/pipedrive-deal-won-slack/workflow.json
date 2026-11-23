@@ -1,0 +1,214 @@
+{
+  "name": "Pipedrive deal won Slack alert",
+  "nodes": [
+    {
+      "id": "c9bcb93b-1508-41a0-ab70-142cea8742ed",
+      "name": "Setup notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -420,
+        40
+      ],
+      "parameters": {
+        "content": "## Deal won \u2192 Slack\n\nPipedrive sends every deal event. The IF keeps only a transition into Won, so edits to an already-won deal stay quiet.\n\nSet slackChannel in Settings. Connect the Pipedrive API token and Slack.",
+        "height": 240,
+        "width": 380,
+        "color": 4
+      }
+    },
+    {
+      "id": "827b834e-d166-41b3-a513-f7c92dd7660e",
+      "name": "Pipedrive Deal Event",
+      "type": "n8n-nodes-base.pipedriveTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "authentication": "apiToken",
+        "incomingAuthentication": "none",
+        "action": "*",
+        "entity": "deal"
+      },
+      "credentials": {
+        "pipedriveApi": {
+          "id": null,
+          "name": "Pipedrive account"
+        }
+      }
+    },
+    {
+      "id": "da46c0e2-2029-4769-96c5-d42fdabc0bc7",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        280,
+        300
+      ],
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d925c3cd-ae9e-464c-9e6f-3bee2d08328b",
+              "name": "slackChannel",
+              "value": "#sales-wins",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "6821d102-98ec-4ebc-9547-87bb1e284ddc",
+      "name": "Normalize Deal",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        540,
+        300
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const body = $json.body && typeof $json.body === 'object' ? $json.body : $json;\nconst current = body.current || {};\nconst previous = body.previous || {};\nconst meta = body.meta || {};\nconst idOf = (value) => {\n  if (value === null || value === undefined || value === '') return null;\n  if (typeof value === 'object') return value.value || value.id || null;\n  return value;\n};\nreturn [{\n  json: {\n    dealId: idOf(current.id) || idOf(meta.id),\n    title: current.title || '',\n    status: current.status || '',\n    previousStatus: previous.status || '',\n    value: Number(current.value || 0),\n    currency: String(current.currency || 'USD'),\n    personId: idOf(current.person_id),\n    personName: current.person_name || '',\n    orgName: current.org_name || '',\n    ownerName: current.owner_name || '',\n    stageId: idOf(current.stage_id),\n  },\n}];"
+      }
+    },
+    {
+      "id": "87e9522e-215c-4720-a383-f789911fc8ae",
+      "name": "Just Won?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        800,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "09db079e-ae6b-43cc-a92d-b8103dd3757d",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "won",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "a80b6632-d709-47c3-9bea-83d7dd6278b5",
+              "leftValue": "={{ $json.previousStatus }}",
+              "rightValue": "won",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ed402933-c6b1-4679-a2c9-bc894d6b485b",
+      "name": "Announce Win",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.5,
+      "position": [
+        1080,
+        180
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "={{ $('Settings').first().json.slackChannel }}"
+        },
+        "messageType": "text",
+        "text": "={{ '*Deal won* ' + $json.title + '\\n' + $json.currency + ' ' + $json.value + ' \u00b7 ' + ($json.orgName || $json.personName || 'no company') + '\\nOwner: ' + ($json.ownerName || 'unassigned') + ' \u00b7 Pipedrive deal ' + $json.dealId }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": null,
+          "name": "Slack account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Pipedrive Deal Event": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Normalize Deal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Deal": {
+      "main": [
+        [
+          {
+            "node": "Just Won?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Just Won?": {
+      "main": [
+        [
+          {
+            "node": "Announce Win",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "85985d5f-6f49-4279-b301-5f4efe99dd4a",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
