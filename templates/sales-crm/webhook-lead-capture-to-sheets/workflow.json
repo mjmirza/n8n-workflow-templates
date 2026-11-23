@@ -1,0 +1,384 @@
+{
+  "name": "Webhook lead capture to Google Sheets",
+  "nodes": [
+    {
+      "id": "9660a015-ff58-41bf-b034-0fbb4340be70",
+      "name": "Setup notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -420,
+        40
+      ],
+      "parameters": {
+        "content": "## Webhook lead capture\n\n1. Connect Google Sheets.\n2. Put the spreadsheet ID in Settings.\n3. Create a Leads tab with the columns listed in the README.\n4. Activate, then POST a lead to the production webhook URL.",
+        "height": 280,
+        "width": 380,
+        "color": 4
+      }
+    },
+    {
+      "id": "a5044f57-634a-4243-be28-e2f13bf233e9",
+      "name": "Lead Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "sales-lead",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "webhookId": "0e328d61-8646-4ac6-99f7-224ce5e4c58d"
+    },
+    {
+      "id": "f24d6d34-477c-4b04-9752-dc3b10d0d526",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        260,
+        300
+      ],
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cf7421b3-4f9d-40df-b579-61632cb58432",
+              "name": "spreadsheetId",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "94d5d0eb-6a0b-4f7e-89ee-4e483a415b7e",
+              "name": "sheetName",
+              "value": "Leads",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "8ff60ecf-291c-420f-afe6-ad7a6ef1fa56",
+      "name": "Normalize Lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        300
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const sourceItem = $('Lead Webhook').first().json;\nconst raw = sourceItem.body && typeof sourceItem.body === 'object' ? sourceItem.body : sourceItem;\nconst pick = (...keys) => {\n  for (const key of keys) {\n    const value = raw[key];\n    if (value !== undefined && value !== null && String(value).trim() !== '') {\n      return String(value).trim();\n    }\n  }\n  return '';\n};\nlet firstName = pick('firstName', 'first_name', 'firstname');\nlet lastName = pick('lastName', 'last_name', 'lastname');\nconst fullName = pick('fullName', 'full_name', 'name');\nif (!firstName && fullName) {\n  const parts = fullName.split(/\\s+/).filter(Boolean);\n  firstName = parts.shift() || '';\n  lastName = lastName || parts.join(' ');\n}\nreturn [{\n  json: {\n    email: pick('email', 'Email', 'workEmail').toLowerCase(),\n    firstName,\n    lastName,\n    fullName: fullName || [firstName, lastName].filter(Boolean).join(' '),\n    company: pick('company', 'companyName', 'company_name', 'organization'),\n    jobTitle: pick('jobTitle', 'job_title', 'title'),\n    phone: pick('phone', 'phoneNumber', 'phone_number'),\n    website: pick('website', 'websiteUrl', 'companyWebsite'),\n    source: pick('source', 'utm_source', 'leadSource') || 'webhook',\n    pageUrl: pick('pageUrl', 'page_url', 'landingPage'),\n    message: pick('message', 'notes', 'comments'),\n    employeeCount: pick('employeeCount', 'employees', 'companySize'),\n    annualRevenue: pick('annualRevenue', 'revenue'),\n    receivedAt: new Date().toISOString(),\n  },\n}];"
+      }
+    },
+    {
+      "id": "d9929293-6be5-4789-ba43-ae5df69112b5",
+      "name": "Valid Email?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        780,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "23df8838-27a2-42f3-8cdd-095736443444",
+              "leftValue": "={{ $json.email }}",
+              "rightValue": "@",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            },
+            {
+              "id": "5c86deaf-dbc6-4f43-b62a-eef28c17fff6",
+              "leftValue": "={{ $json.email }}",
+              "rightValue": " ",
+              "operator": {
+                "type": "string",
+                "operation": "notContains"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ef7361c4-aa8f-4114-8297-ad5b9a660daa",
+      "name": "Append Lead",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1080,
+        180
+      ],
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Settings').first().json.spreadsheetId }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Received At": "={{ $json.receivedAt }}",
+            "Email": "={{ $json.email }}",
+            "First Name": "={{ $json.firstName }}",
+            "Last Name": "={{ $json.lastName }}",
+            "Company": "={{ $json.company }}",
+            "Job Title": "={{ $json.jobTitle }}",
+            "Phone": "={{ $json.phone }}",
+            "Website": "={{ $json.website }}",
+            "Source": "={{ $json.source }}",
+            "Page URL": "={{ $json.pageUrl }}",
+            "Message": "={{ $json.message }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Received At",
+              "displayName": "Received At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "First Name",
+              "displayName": "First Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Last Name",
+              "displayName": "Last Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Company",
+              "displayName": "Company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Job Title",
+              "displayName": "Job Title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Phone",
+              "displayName": "Phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Website",
+              "displayName": "Website",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Source",
+              "displayName": "Source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Page URL",
+              "displayName": "Page URL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Message",
+              "displayName": "Message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": null,
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "6f493ca2-3880-4f56-9820-4783c903f487",
+      "name": "Respond Accepted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1360,
+        180
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, email: $('Normalize Lead').first().json.email, receivedAt: $('Normalize Lead').first().json.receivedAt }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "633c2e71-a743-4bc8-ab44-acaa66cf0aac",
+      "name": "Respond Invalid",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1080,
+        460
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, error: \"A valid email is required.\" }) }}",
+        "options": {
+          "responseCode": 422
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Lead Webhook": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Normalize Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Lead": {
+      "main": [
+        [
+          {
+            "node": "Valid Email?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid Email?": {
+      "main": [
+        [
+          {
+            "node": "Append Lead",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Invalid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append Lead": {
+      "main": [
+        [
+          {
+            "node": "Respond Accepted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "a5eb5303-2251-44e7-8f9d-7f8c54fed452",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
