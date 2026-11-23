@@ -1,0 +1,430 @@
+{
+  "name": "Meeting transcript to action items",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Transcript to action items\n\n1. Attach OpenAI, Slack, and Google Sheets credentials.\n2. Set the spreadsheet id, sheet name, and Slack channel in Config.\n3. Sheet headers: Title, Attendees, Summary, Decisions, Task, Owner, DueDate, Priority.\n4. One sheet row is written per action item. A meeting with no actions still writes one row so the summary is kept.",
+        "width": 420,
+        "height": 300,
+        "color": 4
+      },
+      "id": "0fbe9b4a-0d12-4cd3-b919-add8bbc123bb",
+      "name": "Setup notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -460,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "meeting-actions",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "478d15ed-9d00-4c8e-a4db-28fa83f2e7bd",
+      "name": "Transcript Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        280
+      ],
+      "webhookId": "28b9b9b6-726d-42bf-a456-87115ef3e2f6"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a24d8946-3630-4cd0-b1b3-ca77abf62984",
+              "name": "spreadsheetId",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "374e7a79-bca9-4fb7-b034-afebe0953366",
+              "name": "sheetName",
+              "value": "ActionItems",
+              "type": "string"
+            },
+            {
+              "id": "c75b66ce-687b-4b8f-8840-40ae376ee5a7",
+              "name": "slackChannel",
+              "value": "meeting-actions",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "a241ccd2-8451-46bf-b633-5f8942a00382",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const results = [];\nfor (const item of $input.all()) {\n  const raw = item.json.body && typeof item.json.body === 'object' ? item.json.body : item.json;\n  const attendees = Array.isArray(raw.attendees) ? raw.attendees.join(', ') : String(raw.attendees || '');\n  results.push({\n    json: {\n      title: String(raw.title || 'Untitled meeting').slice(0, 200),\n      attendees,\n      transcript: String(raw.transcript || raw.text || '').slice(0, 24000),\n    },\n  });\n}\nreturn results;\n"
+      },
+      "id": "c8b3ea52-84d2-49e1-b80e-76989ce67fe2",
+      "name": "Normalize Transcript",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Turn this meeting transcript into a short summary, the decisions that were actually agreed, and concrete action items. Do not assign an owner who was not in the transcript or the attendee list. If no due date was stated, leave dueDate empty. priority is low, normal, or high.\n\nTitle: {{ $json.title }}\nAttendees: {{ $json.attendees }}\n\nTranscript:\n{{ $json.transcript }}",
+        "hasOutputParser": true
+      },
+      "id": "e9c625e4-094c-4249-a2a1-ed1920119449",
+      "name": "Extract Actions",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        720,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "options": {
+          "temperature": 0
+        }
+      },
+      "id": "37848911-c18e-42c4-a39c-6a500d186efd",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        720,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "schemaType": "fromJson",
+        "jsonSchemaExample": "{\n  \"summary\": \"The team agreed to ship the billing fix this week.\",\n  \"decisions\": [\n    \"Ship the tax fix on Thursday\"\n  ],\n  \"actionItems\": [\n    {\n      \"task\": \"Send the revised quote\",\n      \"owner\": \"Amina\",\n      \"dueDate\": \"2026-11-28\",\n      \"priority\": \"high\"\n    }\n  ]\n}"
+      },
+      "id": "5455ce14-6f49-4e02-a351-c6e6fd94e612",
+      "name": "Action Schema",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.2,
+      "position": [
+        960,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const meeting = $('Normalize Transcript').first().json;\nconst raw = $input.first().json;\nconst parsed = raw.summary ? raw : (raw.output || {});\nconst decisions = Array.isArray(parsed.decisions) ? parsed.decisions.map((item) => String(item)) : [];\nlet actions = Array.isArray(parsed.actionItems) ? parsed.actionItems : [];\nactions = actions.map((item) => ({\n  task: String(item.task || '').slice(0, 400),\n  owner: String(item.owner || 'unassigned').slice(0, 120),\n  dueDate: String(item.dueDate || ''),\n  priority: ['low', 'normal', 'high'].includes(String(item.priority || '').toLowerCase())\n    ? String(item.priority).toLowerCase()\n    : 'normal',\n}));\nif (!actions.length) {\n  actions = [{ task: '', owner: '', dueDate: '', priority: '', note: 'No action items' }];\n}\nconst slackText = '*' + meeting.title + '*\\n'\n  + (meeting.attendees ? 'Attendees: ' + meeting.attendees + '\\n' : '')\n  + '\\n' + String(parsed.summary || '')\n  + '\\n\\n*Decisions*\\n' + (decisions.length ? decisions.map((d) => '- ' + d).join('\\n') : '- none')\n  + '\\n\\n*Action items*\\n' + actions.filter((a) => a.task).map((a) => '- ' + a.task + ' (' + a.owner + (a.dueDate ? ', due ' + a.dueDate : '') + ')').join('\\n');\nreturn [{\n  json: {\n    title: meeting.title,\n    attendees: meeting.attendees,\n    summary: String(parsed.summary || ''),\n    decisions,\n    actionItems: actions,\n    slackText: slackText || meeting.title,\n  },\n}];\n"
+      },
+      "id": "1e7e02d7-9ab5-46df-8f72-1a3e5da64569",
+      "name": "Package Meeting",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "accessToken",
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "={{ $('Config').item.json.slackChannel }}"
+        },
+        "text": "={{ $json.slackText }}",
+        "otherOptions": {}
+      },
+      "id": "a2d20dfb-f34b-416f-b2a0-d4a67699b38d",
+      "name": "Post Summary",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        1260,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "actionItems",
+        "include": "noOtherFields",
+        "options": {}
+      },
+      "id": "80e72a7f-20a1-4e6b-b43e-b1c6cc1eac13",
+      "name": "Split Action Items",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        1260,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config').item.json.spreadsheetId }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $('Config').item.json.sheetName }}",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Title": "={{ $('Package Meeting').item.json.title }}",
+            "Attendees": "={{ $('Package Meeting').item.json.attendees }}",
+            "Summary": "={{ $('Package Meeting').item.json.summary }}",
+            "Decisions": "={{ $('Package Meeting').item.json.decisions.join('; ') }}",
+            "Task": "={{ $json.task }}",
+            "Owner": "={{ $json.owner }}",
+            "DueDate": "={{ $json.dueDate }}",
+            "Priority": "={{ $json.priority }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Title",
+              "displayName": "Title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Attendees",
+              "displayName": "Attendees",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Summary",
+              "displayName": "Summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Decisions",
+              "displayName": "Decisions",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Task",
+              "displayName": "Task",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Owner",
+              "displayName": "Owner",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "DueDate",
+              "displayName": "DueDate",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Priority",
+              "displayName": "Priority",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ee4a29f8-45e3-43f0-b982-db0dbe6645df",
+      "name": "Log Action Item",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1520,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($('Package Meeting').item.json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "c406a7d4-c822-4876-83d5-dcc23c798e94",
+      "name": "Reply With Actions",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1520,
+        120
+      ]
+    }
+  ],
+  "connections": {
+    "Transcript Webhook": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Normalize Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Transcript": {
+      "main": [
+        [
+          {
+            "node": "Extract Actions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Extract Actions",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Action Schema": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Extract Actions",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Actions": {
+      "main": [
+        [
+          {
+            "node": "Package Meeting",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Package Meeting": {
+      "main": [
+        [
+          {
+            "node": "Post Summary",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Split Action Items",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Reply With Actions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Action Items": {
+      "main": [
+        [
+          {
+            "node": "Log Action Item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "active": false
+}
