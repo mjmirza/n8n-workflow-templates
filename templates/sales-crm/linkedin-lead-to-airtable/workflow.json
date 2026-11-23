@@ -1,0 +1,605 @@
+{
+  "name": "LinkedIn lead to Airtable",
+  "nodes": [
+    {
+      "id": "e49bc0d6-9b2e-471b-aedb-1769fda22308",
+      "name": "Setup notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -420,
+        40
+      ],
+      "parameters": {
+        "content": "## LinkedIn lead \u2192 Airtable\n\nPOST a flattened lead, or a LinkedIn lead-notification that only contains leadGenFormResponse. The second shape is fetched with the LinkedIn header credential, then the first email-like answer is used.\n\nAirtable is checked by the Email field before a row is created.",
+        "height": 260,
+        "width": 400,
+        "color": 4
+      }
+    },
+    {
+      "id": "7e53651b-f7da-4814-8caa-b28cdc08acb8",
+      "name": "LinkedIn Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        320
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "linkedin-lead",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "webhookId": "58407ac8-e935-47d7-a46c-926cdf6a9e89"
+    },
+    {
+      "id": "ab85ddb1-d7eb-49ea-afca-2f2fba5d0f63",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        260,
+        320
+      ],
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b19b659a-2399-4b3c-a9b5-16b4b22fce7f",
+              "name": "baseId",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "ea497c14-521f-4708-9497-8fb044ce349b",
+              "name": "tableId",
+              "value": "Leads",
+              "type": "string"
+            },
+            {
+              "id": "c647c55c-fb50-48be-a3a5-7de9480e012a",
+              "name": "slackChannel",
+              "value": "#sales-inbound",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "15b33398-b1a1-49d1-8d5c-885ed014eb5f",
+      "name": "Normalize Lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        320
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const sourceItem = $('LinkedIn Webhook').first().json;\nconst raw = sourceItem.body && typeof sourceItem.body === 'object' ? sourceItem.body : sourceItem;\nconst pick = (...keys) => {\n  for (const key of keys) {\n    const value = raw[key];\n    if (value !== undefined && value !== null && String(value).trim() !== '') return String(value).trim();\n  }\n  return '';\n};\nlet firstName = pick('firstName', 'first_name', 'FirstName');\nlet lastName = pick('lastName', 'last_name', 'LastName');\nconst fullName = pick('fullName', 'name', 'Name');\nif (!firstName && fullName) {\n  const parts = fullName.split(/\\s+/).filter(Boolean);\n  firstName = parts.shift() || '';\n  lastName = lastName || parts.join(' ');\n}\nconst email = pick('email', 'emailAddress', 'Email', 'workEmail').toLowerCase();\nconst leadUrn = pick('leadGenFormResponse', 'leadGenFormResponseId');\nreturn [{\n  json: {\n    email,\n    firstName,\n    lastName,\n    fullName: fullName || [firstName, lastName].filter(Boolean).join(' '),\n    company: pick('company', 'companyName', 'Company'),\n    jobTitle: pick('jobTitle', 'title', 'Title'),\n    phone: pick('phone', 'phoneNumber', 'Phone'),\n    linkedinUrl: pick('linkedinUrl', 'linkedinProfile', 'profileUrl'),\n    formName: pick('formName', 'form'),\n    campaign: pick('campaignName', 'campaign'),\n    submittedAt: pick('submittedAt') || new Date().toISOString(),\n    leadUrn,\n    needsFetch: !email && !!leadUrn,\n  },\n}];"
+      }
+    },
+    {
+      "id": "d22ea9e6-679d-4239-80fd-2a96ab02e592",
+      "name": "Fetch From LinkedIn?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        780,
+        320
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "fd35991e-eb7d-4c14-b74e-20f8ebfd36be",
+              "leftValue": "={{ $json.needsFetch }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "fdb7703a-549f-4a21-b63b-2c21119005f1",
+      "name": "Get Lead Response",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1040,
+        160
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://api.linkedin.com/rest/leadFormResponses/' + encodeURIComponent($json.leadUrn) }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "LinkedIn-Version",
+              "value": "202511"
+            },
+            {
+              "name": "X-Restli-Protocol-Version",
+              "value": "2.0.0"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": null,
+          "name": "LinkedIn access token"
+        }
+      }
+    },
+    {
+      "id": "34ba44bd-d4ec-4fb0-9ab4-0fe7a7fc9f47",
+      "name": "Map LinkedIn Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        160
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const prior = $('Normalize Lead').first().json;\nconst answers = (((($json.formResponse || {}).answers) || []));\nconst texts = [];\nfor (const answer of answers) {\n  const details = answer.answerDetails || {};\n  const text = details.textQuestionAnswer && details.textQuestionAnswer.answer;\n  if (text) texts.push(String(text).trim());\n}\nconst email = texts.find((text) => /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(text)) || prior.email;\nconst name = texts.find((text) => text !== email && !text.includes('@')) || prior.fullName;\nconst parts = String(name || '').split(/\\s+/).filter(Boolean);\nconst campaign = (((($json.leadMetadata || {}).sponsoredLeadMetadata || {}).campaign || {}).name) || prior.campaign;\nreturn [{\n  json: {\n    ...prior,\n    email: String(email || '').toLowerCase(),\n    fullName: name || prior.fullName,\n    firstName: prior.firstName || parts[0] || '',\n    lastName: prior.lastName || parts.slice(1).join(' '),\n    campaign,\n    submittedAt: $json.submittedAt ? new Date($json.submittedAt).toISOString() : prior.submittedAt,\n    needsFetch: false,\n  },\n}];"
+      }
+    },
+    {
+      "id": "b63338fe-abe5-4ff4-b7b3-653eedfd30ed",
+      "name": "Has Email?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1560,
+        320
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "88442d60-554d-4bfe-a570-06bf7e12e3bc",
+              "leftValue": "={{ $json.email }}",
+              "rightValue": "@",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e63bb94f-62ec-45b0-8e6c-df2905ab5b16",
+      "name": "Find Existing Lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1820,
+        200
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.airtable.com/v0/{{ $('Settings').first().json.baseId }}/{{ encodeURIComponent($('Settings').first().json.tableId) }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "airtableTokenApi",
+        "options": {},
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filterByFormula",
+              "value": "={{ \"{Email}='\" + $json.email.split(\"'\").join(\"''\") + \"'\" }}"
+            },
+            {
+              "name": "maxRecords",
+              "value": "1"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "airtableTokenApi": {
+          "id": null,
+          "name": "Airtable account"
+        }
+      }
+    },
+    {
+      "id": "0d14db84-10ff-47e0-a562-7024f1cfa6fe",
+      "name": "Already Stored?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2080,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "7b66e24b-e968-4fd6-a10d-5919d62d9736",
+              "leftValue": "={{ $json.records.length }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "6144e8a7-f857-4fa3-a955-c83032df6541",
+      "name": "Create Lead",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [
+        2360,
+        80
+      ],
+      "parameters": {
+        "operation": "create",
+        "base": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Settings').first().json.baseId }}"
+        },
+        "table": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Settings').first().json.tableId }}"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Name": "={{ $('Has Email?').first().json.fullName }}",
+            "Email": "={{ $('Has Email?').first().json.email }}",
+            "Company": "={{ $('Has Email?').first().json.company }}",
+            "Job Title": "={{ $('Has Email?').first().json.jobTitle }}",
+            "Phone": "={{ $('Has Email?').first().json.phone }}",
+            "LinkedIn URL": "={{ $('Has Email?').first().json.linkedinUrl }}",
+            "Form": "={{ $('Has Email?').first().json.formName }}",
+            "Campaign": "={{ $('Has Email?').first().json.campaign }}",
+            "Submitted At": "={{ $('Has Email?').first().json.submittedAt }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "credentials": {
+        "airtableTokenApi": {
+          "id": null,
+          "name": "Airtable account"
+        }
+      }
+    },
+    {
+      "id": "779a1328-9938-4ab8-b825-6f124ea26a29",
+      "name": "Notify New Lead",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.5,
+      "position": [
+        2640,
+        80
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "={{ $('Settings').first().json.slackChannel }}"
+        },
+        "messageType": "text",
+        "text": "={{ '*LinkedIn lead* ' + $('Has Email?').first().json.fullName + ' <' + $('Has Email?').first().json.email + '>' + ($('Has Email?').first().json.company ? ' \u00b7 ' + $('Has Email?').first().json.company : '') + ($('Has Email?').first().json.campaign ? '\\n' + $('Has Email?').first().json.campaign : '') }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": null,
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "id": "9b061b58-1497-4da7-8266-22d6db15470e",
+      "name": "Notify Duplicate",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.5,
+      "position": [
+        2360,
+        360
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "={{ $('Settings').first().json.slackChannel }}"
+        },
+        "messageType": "text",
+        "text": "={{ '*LinkedIn lead already in Airtable* ' + $('Has Email?').first().json.email }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": null,
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "id": "7eed7958-1aed-42c2-97ad-50319a8240c1",
+      "name": "Respond Created",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        2920,
+        80
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, duplicate: false, email: $('Has Email?').first().json.email, airtableId: $json.id }) }}",
+        "options": {
+          "responseCode": 201
+        }
+      }
+    },
+    {
+      "id": "56b9c944-2ace-43ab-9b8a-1b946e238c52",
+      "name": "Respond Duplicate",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        2640,
+        360
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, duplicate: true, email: $('Has Email?').first().json.email, airtableId: $('Find Existing Lead').first().json.records[0].id }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "36a0c7d8-7714-4329-8f85-08c2eabc57b5",
+      "name": "Respond Unusable",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1820,
+        500
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, error: \"No email on the lead. Send email/emailAddress, or a leadGenFormResponse URN plus a LinkedIn token that can read lead form responses.\" }) }}",
+        "options": {
+          "responseCode": 422
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "LinkedIn Webhook": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Normalize Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Lead": {
+      "main": [
+        [
+          {
+            "node": "Fetch From LinkedIn?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch From LinkedIn?": {
+      "main": [
+        [
+          {
+            "node": "Get Lead Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Has Email?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Lead Response": {
+      "main": [
+        [
+          {
+            "node": "Map LinkedIn Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Map LinkedIn Response": {
+      "main": [
+        [
+          {
+            "node": "Has Email?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Email?": {
+      "main": [
+        [
+          {
+            "node": "Find Existing Lead",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Unusable",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Existing Lead": {
+      "main": [
+        [
+          {
+            "node": "Already Stored?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Already Stored?": {
+      "main": [
+        [
+          {
+            "node": "Notify Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Lead": {
+      "main": [
+        [
+          {
+            "node": "Notify New Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify New Lead": {
+      "main": [
+        [
+          {
+            "node": "Respond Created",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Duplicate": {
+      "main": [
+        [
+          {
+            "node": "Respond Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "287b7c90-f065-41d8-8350-687cf9b7e284",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
