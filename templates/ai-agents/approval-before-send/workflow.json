@@ -1,0 +1,502 @@
+{
+  "name": "Approval before sending email",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Approval before send\n\nThe webhook returns immediately. Slack Message, Send and Wait for Response, posts Approve and Discard buttons.\n\nOnly the approved branch uses Gmail Send. Discard posts a note and does not send.\n\nSet slackChannel in Config. The workflow must be active for the buttons to resume it.",
+        "width": 440,
+        "height": 280,
+        "color": 4
+      },
+      "id": "08a6770c-6358-47cc-bb1b-c8c01fc568ac",
+      "name": "Setup notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "email-approval",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "7a1323dd-fee8-4afc-bc1d-741d9deda9f9",
+      "name": "Draft Request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        280
+      ],
+      "webhookId": "08f7289a-4956-464b-9b66-fee7c65b0f5b"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "af5fa29e-94f1-4a01-b1b9-356fa272f18c",
+              "name": "slackChannel",
+              "value": "email-approvals",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "25895e92-7f46-43db-af43-b3150cc4d603",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const raw = $input.first().json;\nconst body = raw.body && typeof raw.body === 'object' ? raw.body : raw;\nconst to = String(body.to || '').trim();\nconst validTo = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(to);\nreturn [{\n  json: {\n    to,\n    validTo,\n    subject: String(body.subject || '').slice(0, 200),\n    purpose: String(body.purpose || '').slice(0, 500),\n    context: String(body.context || '').slice(0, 8000),\n    requester: String(body.requester || 'unknown').slice(0, 120),\n  },\n}];\n"
+      },
+      "id": "2899fdaa-8d9c-451e-8ae4-309a8e96f44d",
+      "name": "Normalize Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ecad1add-1ffd-4e5f-bcab-2736ec5a0f35",
+              "leftValue": "={{ $json.validTo }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "86e7a855-bba0-4ce4-bbb3-1103a7caab3e",
+      "name": "Recipient looks valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        740,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Draft the email a colleague asked for. Write a clear subject and a plain-text body. Use only facts from the purpose and the context. Do not promise refunds, discounts, or legal outcomes that were not provided. Do not include a signature.\n\nTo: {{ $json.to }}\nRequested subject: {{ $json.subject }}\nPurpose: {{ $json.purpose }}\nContext:\n{{ $json.context }}",
+        "hasOutputParser": true
+      },
+      "id": "4c0db45f-7a21-4ce7-8823-bfb1e9e068c0",
+      "name": "Draft Email",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        1000,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "id": "32c1c4da-da50-4ede-9c9a-0df46259c61b",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        1000,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "schemaType": "fromJson",
+        "jsonSchemaExample": "{\n  \"subject\": \"April invoice copy\",\n  \"body\": \"Hi Northwind, the April invoice is attached in the thread. The total is 88 USD.\"\n}"
+      },
+      "id": "794b5bc6-7c9c-49c4-8bbb-4b0e7bc7074a",
+      "name": "Email Schema",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.2,
+      "position": [
+        1220,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const request = $('Normalize Request').first().json;\nconst raw = $input.first().json;\nconst parsed = raw.body ? raw : (raw.output || {});\nconst body = String(parsed.body || raw.text || '').trim();\nconst subject = String(parsed.subject || request.subject || '').trim();\nreturn [{\n  json: {\n    to: request.to,\n    subject,\n    body,\n    purpose: request.purpose,\n    requester: request.requester,\n    approvalMessage: 'Send this email?\\nTo: ' + request.to + '\\nSubject: ' + subject + '\\nRequested by: ' + request.requester\n      + '\\nPurpose: ' + request.purpose + '\\n\\n' + body,\n  },\n}];\n"
+      },
+      "id": "296b8d13-bcc6-40d6-a772-6b0989805e3c",
+      "name": "Assemble Draft",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "accessToken",
+        "resource": "message",
+        "operation": "sendAndWait",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "={{ $('Config').item.json.slackChannel }}"
+        },
+        "subject": "={{ 'Send email to ' + $json.to + '?' }}",
+        "message": "={{ $json.approvalMessage }}",
+        "responseType": "approval",
+        "approvalOptions": {
+          "values": {
+            "approvalType": "double",
+            "approveLabel": "Send email",
+            "buttonApprovalStyle": "primary",
+            "disapproveLabel": "Discard",
+            "buttonDisapprovalStyle": "secondary"
+          }
+        },
+        "options": {}
+      },
+      "id": "e266bc1a-bc11-4a51-aa25-08552a13d51b",
+      "name": "Wait For Approval",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        1520,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const raw = $input.first().json;\nconst approved = raw?.data?.approved === true || raw?.approved === true;\nconst draft = $('Assemble Draft').first().json;\nreturn [{ json: { approved, to: draft.to, subject: draft.subject, body: draft.body, requester: draft.requester } }];\n"
+      },
+      "id": "6b13f015-0e82-4ceb-b32f-d05364838903",
+      "name": "Read Decision",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b2618afb-b9f7-490a-9b89-b87108121b46",
+              "leftValue": "={{ $json.approved }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "30b4ea1a-da98-4f43-949e-8d5dcc3ba0e9",
+      "name": "Approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1980,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "text",
+        "message": "={{ $json.body }}",
+        "options": {}
+      },
+      "id": "d1b06e21-f89a-4e50-9225-ea15fc02b03c",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2220,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "accessToken",
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "={{ $('Config').item.json.slackChannel }}"
+        },
+        "text": "=Sent to {{ $('Read Decision').item.json.to }}: {{ $('Read Decision').item.json.subject }}",
+        "otherOptions": {}
+      },
+      "id": "0aec984b-2a11-4d19-b31f-a9b9d34d0bfd",
+      "name": "Confirm Sent",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        2460,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "accessToken",
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "={{ $('Config').item.json.slackChannel }}"
+        },
+        "text": "=Discarded. Nothing was sent to {{ $json.to }}. Subject: {{ $json.subject }}",
+        "otherOptions": {}
+      },
+      "id": "afdc75c8-9420-4470-aa03-41afbe340585",
+      "name": "Confirm Discarded",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        2220,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "accessToken",
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "={{ $('Config').item.json.slackChannel }}"
+        },
+        "text": "=Did not draft a message. The recipient did not look like an email address ({{ $json.to || 'empty' }}). Requested by {{ $json.requester }}.",
+        "otherOptions": {}
+      },
+      "id": "18276f61-5b01-459e-9b3c-9dc454ebc027",
+      "name": "Reject Bad Address",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        1000,
+        520
+      ]
+    }
+  ],
+  "connections": {
+    "Draft Request": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Normalize Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Request": {
+      "main": [
+        [
+          {
+            "node": "Recipient looks valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recipient looks valid?": {
+      "main": [
+        [
+          {
+            "node": "Draft Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject Bad Address",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Draft Email",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Schema": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Draft Email",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft Email": {
+      "main": [
+        [
+          {
+            "node": "Assemble Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assemble Draft": {
+      "main": [
+        [
+          {
+            "node": "Wait For Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait For Approval": {
+      "main": [
+        [
+          {
+            "node": "Read Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Decision": {
+      "main": [
+        [
+          {
+            "node": "Approved?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approved?": {
+      "main": [
+        [
+          {
+            "node": "Send Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Confirm Discarded",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email": {
+      "main": [
+        [
+          {
+            "node": "Confirm Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "active": false
+}
