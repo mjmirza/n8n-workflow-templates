@@ -1,0 +1,251 @@
+{
+  "name": "Form submission to HubSpot contact",
+  "nodes": [
+    {
+      "id": "06055e4b-3a9d-4455-be97-6621958465fb",
+      "name": "Setup notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -420,
+        40
+      ],
+      "parameters": {
+        "content": "## Form to HubSpot\n\nConnect a HubSpot private app token. The upsert key is email, so a second submit updates the same contact instead of creating a duplicate.\n\nleadStatus in Settings is written on every submit. Leave it blank to keep the current HubSpot value when the form does not send one.",
+        "height": 260,
+        "width": 380,
+        "color": 4
+      }
+    },
+    {
+      "id": "ff82a990-d955-4604-b036-25d621e406e2",
+      "name": "Form Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "hubspot-lead-form",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "webhookId": "d061ad7d-5072-48e1-a787-92c8738de2b0"
+    },
+    {
+      "id": "0f370f12-63ea-43a9-a6bf-890789b55b7e",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        260,
+        300
+      ],
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "bf6da731-9b71-4859-939d-90e14503c72e",
+              "name": "leadStatus",
+              "value": "NEW",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "525d74d5-cd81-4ee6-bcf0-0a9b4c519fa2",
+      "name": "Normalize Form",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        300
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const sourceItem = $('Form Webhook').first().json;\nconst raw = sourceItem.body && typeof sourceItem.body === 'object' ? sourceItem.body : sourceItem;\nconst settings = $('Settings').first().json;\nconst pick = (...keys) => {\n  for (const key of keys) {\n    const value = raw[key];\n    if (value !== undefined && value !== null && String(value).trim() !== '') return String(value).trim();\n  }\n  return '';\n};\nlet firstName = pick('firstName', 'first_name', 'firstname');\nlet lastName = pick('lastName', 'last_name', 'lastname');\nconst fullName = pick('fullName', 'name');\nif (!firstName && fullName) {\n  const parts = fullName.split(/\\s+/).filter(Boolean);\n  firstName = parts.shift() || '';\n  lastName = lastName || parts.join(' ');\n}\nreturn [{\n  json: {\n    email: pick('email', 'Email').toLowerCase(),\n    firstName,\n    lastName,\n    company: pick('company', 'companyName'),\n    jobTitle: pick('jobTitle', 'title'),\n    phone: pick('phone', 'phoneNumber'),\n    website: pick('website', 'websiteUrl'),\n    leadStatus: pick('leadStatus') || settings.leadStatus || '',\n  },\n}];"
+      }
+    },
+    {
+      "id": "d972d9ed-87a1-47c4-8cc1-60c32a3bb6e6",
+      "name": "Valid Email?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        780,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "1295b941-1667-416f-89a2-60386c83a401",
+              "leftValue": "={{ $json.email }}",
+              "rightValue": "@",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "2d0a757a-3578-47c5-97f1-835f9df1968b",
+      "name": "Upsert Contact",
+      "type": "n8n-nodes-base.hubspot",
+      "typeVersion": 2.2,
+      "position": [
+        1040,
+        180
+      ],
+      "parameters": {
+        "authentication": "appToken",
+        "resource": "contact",
+        "operation": "upsert",
+        "email": "={{ $json.email }}",
+        "additionalFields": {
+          "firstName": "={{ $json.firstName }}",
+          "lastName": "={{ $json.lastName }}",
+          "companyName": "={{ $json.company }}",
+          "jobTitle": "={{ $json.jobTitle }}",
+          "phoneNumber": "={{ $json.phone }}",
+          "websiteUrl": "={{ $json.website }}",
+          "leadStatus": "={{ $json.leadStatus }}"
+        },
+        "options": {}
+      },
+      "credentials": {
+        "hubspotAppToken": {
+          "id": null,
+          "name": "HubSpot account"
+        }
+      }
+    },
+    {
+      "id": "464304e2-7ea7-41dc-9054-914c2cf16c8f",
+      "name": "Respond Created",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1320,
+        180
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, email: $('Normalize Form').first().json.email, hubspotVid: $json.vid, isNew: $json.isNew === true }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "509f6fbc-dcc3-4945-95f1-e03d45b84fb4",
+      "name": "Respond Invalid",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1040,
+        460
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, error: \"A valid email is required.\" }) }}",
+        "options": {
+          "responseCode": 422
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Form Webhook": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Normalize Form",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Form": {
+      "main": [
+        [
+          {
+            "node": "Valid Email?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid Email?": {
+      "main": [
+        [
+          {
+            "node": "Upsert Contact",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Invalid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Contact": {
+      "main": [
+        [
+          {
+            "node": "Respond Created",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "dde8ab09-f82e-405c-a228-5c1a83ca720c",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
