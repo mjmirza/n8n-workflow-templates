@@ -1,0 +1,337 @@
+{
+  "name": "Calendly booking to HubSpot",
+  "nodes": [
+    {
+      "id": "ac3bab84-c5c3-4d0c-98e4-d507a1282c11",
+      "name": "Setup notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -420,
+        40
+      ],
+      "parameters": {
+        "content": "## Calendly booking to HubSpot\n\nSubscribe to invitee.created. Each booking upserts the invitee and logs a meeting engagement on that contact, then posts to Slack.\n\nConnect Calendly, HubSpot, and Slack.",
+        "height": 220,
+        "width": 380,
+        "color": 4
+      }
+    },
+    {
+      "id": "b253035b-9173-49ca-8715-f437376bb985",
+      "name": "Calendly Booking",
+      "type": "n8n-nodes-base.calendlyTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "authentication": "apiKey",
+        "scope": "user",
+        "events": [
+          "invitee.created"
+        ]
+      },
+      "credentials": {
+        "calendlyApi": {
+          "id": null,
+          "name": "Calendly account"
+        }
+      }
+    },
+    {
+      "id": "b8f1abf5-98f1-4048-8e4d-d4351a17be7c",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        280,
+        300
+      ],
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "16da1759-65b9-40db-b856-b41644cff117",
+              "name": "slackChannel",
+              "value": "#sales-meetings",
+              "type": "string"
+            },
+            {
+              "id": "8aa34b4c-7563-45b5-acec-66b512d40bb6",
+              "name": "leadStatus",
+              "value": "NEW",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "8c02b51e-41cc-4784-97e9-69bcb0459fe1",
+      "name": "Normalize Booking",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        540,
+        300
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const root = $json;\nconst payload = root.payload && typeof root.payload === 'object' ? root.payload : root;\nconst invitee = payload.invitee || payload;\nconst event = payload.scheduled_event || payload.event || {};\nconst email = String(invitee.email || payload.email || '').trim().toLowerCase();\nconst fullName = String(invitee.name || payload.name || '').trim();\nconst parts = fullName.split(/\\s+/).filter(Boolean);\nconst questions = payload.questions_and_answers || invitee.questions_and_answers || [];\nlet company = '';\nfor (const row of questions) {\n  const question = String(row.question || '').toLowerCase();\n  if (question.includes('company') || question.includes('organization')) {\n    company = String(row.answer || '').trim();\n  }\n}\nconst start = event.start_time || '';\nlet end = event.end_time || '';\nif (!end && start) {\n  const parsed = Date.parse(start);\n  if (Number.isFinite(parsed)) end = new Date(parsed + 30 * 60 * 1000).toISOString();\n}\nconst location = event.location || {};\nreturn [{\n  json: {\n    email,\n    firstName: parts[0] || '',\n    lastName: parts.slice(1).join(' '),\n    company,\n    jobTitle: '',\n    phone: '',\n    website: '',\n    leadStatus: $('Settings').first().json.leadStatus || '',\n    eventTitle: event.name || (payload.event_type && payload.event_type.name) || 'Calendly meeting',\n    startTime: start,\n    endTime: end,\n    meetingLink: location.join_url || location.location || '',\n    timezone: invitee.timezone || payload.timezone || '',\n  },\n}];"
+      }
+    },
+    {
+      "id": "744d5c10-6e20-42c2-8006-2d5d388cf56f",
+      "name": "Has Email?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        800,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "3137f4e4-1296-461f-a303-f7213981df99",
+              "leftValue": "={{ $json.email }}",
+              "rightValue": "@",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "0b02ddec-4387-46f3-96f2-800d8acbee05",
+      "name": "Upsert Invitee",
+      "type": "n8n-nodes-base.hubspot",
+      "typeVersion": 2.2,
+      "position": [
+        1060,
+        180
+      ],
+      "parameters": {
+        "authentication": "appToken",
+        "resource": "contact",
+        "operation": "upsert",
+        "email": "={{ $json.email }}",
+        "additionalFields": {
+          "firstName": "={{ $json.firstName }}",
+          "lastName": "={{ $json.lastName }}",
+          "companyName": "={{ $json.company }}",
+          "jobTitle": "={{ $json.jobTitle }}",
+          "phoneNumber": "={{ $json.phone }}",
+          "websiteUrl": "={{ $json.website }}",
+          "leadStatus": "={{ $json.leadStatus }}"
+        },
+        "options": {}
+      },
+      "credentials": {
+        "hubspotAppToken": {
+          "id": null,
+          "name": "HubSpot account"
+        }
+      }
+    },
+    {
+      "id": "8ce65d6b-3750-4fcd-901c-668c47a505a6",
+      "name": "Log Meeting",
+      "type": "n8n-nodes-base.hubspot",
+      "typeVersion": 2.2,
+      "position": [
+        1340,
+        180
+      ],
+      "parameters": {
+        "authentication": "appToken",
+        "resource": "engagement",
+        "operation": "create",
+        "type": "meeting",
+        "metadata": {
+          "title": "={{ $('Normalize Booking').item.json.eventTitle }}",
+          "body": "={{ 'Booked via Calendly' + ($('Normalize Booking').item.json.meetingLink ? '\\n' + $('Normalize Booking').item.json.meetingLink : '') }}",
+          "startTime": "={{ $('Normalize Booking').item.json.startTime }}",
+          "endTime": "={{ $('Normalize Booking').item.json.endTime }}"
+        },
+        "additionalFields": {
+          "associations": {
+            "contactIds": "={{ $json.vid }}"
+          }
+        }
+      },
+      "credentials": {
+        "hubspotAppToken": {
+          "id": null,
+          "name": "HubSpot account"
+        }
+      }
+    },
+    {
+      "id": "a4c75415-a037-4f1b-8480-e0d7c9f96d5a",
+      "name": "Notify Booking",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.5,
+      "position": [
+        1620,
+        180
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "={{ $('Settings').first().json.slackChannel }}"
+        },
+        "messageType": "text",
+        "text": "={{ '*Calendly booking* ' + $('Normalize Booking').item.json.eventTitle + '\\n' + $('Normalize Booking').item.json.firstName + ' ' + $('Normalize Booking').item.json.lastName + ' <' + $('Normalize Booking').item.json.email + '>' + ($('Normalize Booking').item.json.company ? ' \u00b7 ' + $('Normalize Booking').item.json.company : '') + '\\n' + $('Normalize Booking').item.json.startTime }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": null,
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "id": "c62a206a-b84c-4047-b615-217a29530aae",
+      "name": "Notify Missing Email",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.5,
+      "position": [
+        1060,
+        460
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "={{ $('Settings').first().json.slackChannel }}"
+        },
+        "messageType": "text",
+        "text": "={{ '*Calendly booking skipped* \u2014 invitee payload had no email.\\n' + JSON.stringify($('Normalize Booking').item.json.eventTitle) }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": null,
+          "name": "Slack account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Calendly Booking": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Normalize Booking",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Booking": {
+      "main": [
+        [
+          {
+            "node": "Has Email?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Email?": {
+      "main": [
+        [
+          {
+            "node": "Upsert Invitee",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify Missing Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Invitee": {
+      "main": [
+        [
+          {
+            "node": "Log Meeting",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Meeting": {
+      "main": [
+        [
+          {
+            "node": "Notify Booking",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "c4877ed9-1984-4d3b-b8af-7b1aaed06f37",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
