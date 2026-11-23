@@ -1,0 +1,960 @@
+{
+  "name": "Stripe invoice when a Pipedrive deal is won",
+  "nodes": [
+    {
+      "id": "aa718a73-7538-4efd-a7ca-7be2c33c1281",
+      "name": "Setup notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -420,
+        40
+      ],
+      "parameters": {
+        "content": "## Invoice on deal close\n\nWhen a deal first becomes Won, look up the person, reuse or create a Stripe customer by email, add an invoice item for the deal value, finalize a send-invoice, email it, and write the hosted URL back to the Pipedrive deal as a note.\n\nZero-value deals and deals with no person email are announced in Slack and not invoiced.",
+        "height": 300,
+        "width": 420,
+        "color": 4
+      }
+    },
+    {
+      "id": "441ec5f8-1c34-4556-9848-35f059909e56",
+      "name": "Pipedrive Deal Event",
+      "type": "n8n-nodes-base.pipedriveTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        320
+      ],
+      "parameters": {
+        "authentication": "apiToken",
+        "incomingAuthentication": "none",
+        "action": "*",
+        "entity": "deal"
+      },
+      "credentials": {
+        "pipedriveApi": {
+          "id": null,
+          "name": "Pipedrive account"
+        }
+      }
+    },
+    {
+      "id": "5033c8fd-aa42-4f1d-8fdc-b5370044972f",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        280,
+        320
+      ],
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "78329ad3-c97d-4e1b-9385-788998913e46",
+              "name": "slackChannel",
+              "value": "#sales-finance",
+              "type": "string"
+            },
+            {
+              "id": "2303f473-ee9a-439b-ac36-5dac6db3d1b6",
+              "name": "daysUntilDue",
+              "value": 14,
+              "type": "number"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a2c3f1-49d7-43c4-9eb1-dde7f4344662",
+      "name": "Normalize Deal",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        540,
+        320
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const body = $json.body && typeof $json.body === 'object' ? $json.body : $json;\nconst current = body.current || {};\nconst previous = body.previous || {};\nconst meta = body.meta || {};\nconst idOf = (value) => {\n  if (value === null || value === undefined || value === '') return null;\n  if (typeof value === 'object') return value.value || value.id || null;\n  return value;\n};\nreturn [{\n  json: {\n    dealId: idOf(current.id) || idOf(meta.id),\n    title: current.title || '',\n    status: current.status || '',\n    previousStatus: previous.status || '',\n    value: Number(current.value || 0),\n    currency: String(current.currency || 'USD'),\n    personId: idOf(current.person_id),\n    personName: current.person_name || '',\n    orgName: current.org_name || '',\n    ownerName: current.owner_name || '',\n    stageId: idOf(current.stage_id),\n  },\n}];"
+      }
+    },
+    {
+      "id": "0b0df3d7-9b51-4f06-bf4d-a5901b7f65c0",
+      "name": "Just Won?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        800,
+        320
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f17e871d-745b-4ce2-a93f-36fd53996215",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "won",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "17663c1f-ce59-4c3c-b16e-7567aad5bce0",
+              "leftValue": "={{ $json.previousStatus }}",
+              "rightValue": "won",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "3a2b8bf0-b48a-4306-b360-1bc48aa806b2",
+      "name": "Has Person?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1060,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "0d0cc80a-beb8-4658-bc46-6a39ebc6d9cc",
+              "leftValue": "={{ $json.personId }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "38f0745d-daa0-4f90-b0ca-9e5a9d536c39",
+      "name": "Get Person",
+      "type": "n8n-nodes-base.pipedrive",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        80
+      ],
+      "parameters": {
+        "authentication": "apiToken",
+        "resource": "person",
+        "operation": "get",
+        "personId": "={{ $('Normalize Deal').item.json.personId }}"
+      },
+      "credentials": {
+        "pipedriveApi": {
+          "id": null,
+          "name": "Pipedrive account"
+        }
+      }
+    },
+    {
+      "id": "397904c7-0708-4d10-b312-9400bcf9af9b",
+      "name": "Prepare Invoice",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1580,
+        80
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const deal = $('Normalize Deal').item.json;\nconst person = $json;\nconst emails = Array.isArray(person.email) ? person.email : [];\nconst primary = emails.find((entry) => entry && entry.primary && entry.value) || emails.find((entry) => entry && entry.value) || {};\nconst email = String(primary.value || '').trim().toLowerCase();\nconst zeroDecimal = new Set(['bif', 'clp', 'djf', 'gnf', 'jpy', 'kmf', 'krw', 'mga', 'pyg', 'rwf', 'ugx', 'vnd', 'vuv', 'xaf', 'xof', 'xpf']);\nconst currency = String(deal.currency || 'usd').toLowerCase();\nconst amountMajor = Number(deal.value || 0);\nconst amountCents = zeroDecimal.has(currency) ? Math.round(amountMajor) : Math.round(amountMajor * 100);\nreturn [{\n  json: {\n    ...deal,\n    email,\n    personName: person.name || deal.personName || email,\n    amountMajor,\n    amountCents,\n    currency,\n    description: 'Pipedrive deal ' + deal.dealId + ': ' + deal.title,\n  },\n}];"
+      }
+    },
+    {
+      "id": "63fa47f8-9137-4343-8906-f867c51b303f",
+      "name": "Billable?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1840,
+        80
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "d641b0a1-2a03-4196-ab4a-ad2c1dee2d84",
+              "leftValue": "={{ $json.email }}",
+              "rightValue": "@",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            },
+            {
+              "id": "830928cd-e5b6-402f-b39c-9dcb3ddccb38",
+              "leftValue": "={{ $json.amountCents }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "c4d4f52f-80de-47e7-a79f-7cb3f789f618",
+      "name": "Find Stripe Customer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2100,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.stripe.com/v1/customers",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "stripeApi",
+        "options": {},
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "email",
+              "value": "={{ $('Prepare Invoice').item.json.email }}"
+            },
+            {
+              "name": "limit",
+              "value": "1"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "stripeApi": {
+          "id": null,
+          "name": "Stripe account"
+        }
+      }
+    },
+    {
+      "id": "a01c6bae-0c4b-4789-ad04-d06738200eda",
+      "name": "Customer Exists?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2360,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "d1e0632f-65f9-4f30-92a5-255e1f291001",
+              "leftValue": "={{ $json.data.length }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9cc5f01f-3933-4927-8908-6b7345b96012",
+      "name": "Use Existing Customer",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2620,
+        -80
+      ],
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "3103a5a8-8f44-4a29-81a2-9fadfe8a281c",
+              "name": "customerId",
+              "value": "={{ $json.data[0].id }}",
+              "type": "string"
+            },
+            {
+              "id": "1479b43f-cd6b-49f3-9853-64cd54ef7afa",
+              "name": "amountCents",
+              "value": "={{ $('Prepare Invoice').item.json.amountCents }}",
+              "type": "number"
+            },
+            {
+              "id": "2c2d846b-ec67-4314-a7bb-7e261a8a7647",
+              "name": "currency",
+              "value": "={{ $('Prepare Invoice').item.json.currency }}",
+              "type": "string"
+            },
+            {
+              "id": "1a03d12c-5158-49d8-8a67-51514dd11e1c",
+              "name": "description",
+              "value": "={{ $('Prepare Invoice').item.json.description }}",
+              "type": "string"
+            },
+            {
+              "id": "e81a9c1c-1e6d-4d77-a60b-14a93abfc5d3",
+              "name": "dealId",
+              "value": "={{ $('Prepare Invoice').item.json.dealId }}",
+              "type": "number"
+            },
+            {
+              "id": "51112dea-96f2-4a8c-99c8-6a8b1f582b4d",
+              "name": "personId",
+              "value": "={{ $('Prepare Invoice').item.json.personId }}",
+              "type": "number"
+            },
+            {
+              "id": "2c79ab34-fdcd-4913-9118-dcfdc4a9a6de",
+              "name": "title",
+              "value": "={{ $('Prepare Invoice').item.json.title }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "92e4d6ef-b5fb-453d-a4e5-3131999f2916",
+      "name": "Create Stripe Customer",
+      "type": "n8n-nodes-base.stripe",
+      "typeVersion": 1,
+      "position": [
+        2620,
+        160
+      ],
+      "parameters": {
+        "resource": "customer",
+        "operation": "create",
+        "name": "={{ $('Prepare Invoice').item.json.personName }}",
+        "additionalFields": {
+          "email": "={{ $('Prepare Invoice').item.json.email }}",
+          "description": "={{ $('Prepare Invoice').item.json.description }}"
+        }
+      },
+      "credentials": {
+        "stripeApi": {
+          "id": null,
+          "name": "Stripe account"
+        }
+      }
+    },
+    {
+      "id": "fcf08b16-7f88-47aa-94fb-a1813d15bbdd",
+      "name": "Use New Customer",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2880,
+        160
+      ],
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e5f151f8-191b-426f-8712-101cdbc38fae",
+              "name": "customerId",
+              "value": "={{ $json.id }}",
+              "type": "string"
+            },
+            {
+              "id": "7c175a39-afb2-4549-9d8e-af749bf0c437",
+              "name": "amountCents",
+              "value": "={{ $('Prepare Invoice').item.json.amountCents }}",
+              "type": "number"
+            },
+            {
+              "id": "96d18f7e-1e8f-42be-b906-50bd10a50552",
+              "name": "currency",
+              "value": "={{ $('Prepare Invoice').item.json.currency }}",
+              "type": "string"
+            },
+            {
+              "id": "c78f7ded-85a7-4412-9ba6-ee87c4f93ed1",
+              "name": "description",
+              "value": "={{ $('Prepare Invoice').item.json.description }}",
+              "type": "string"
+            },
+            {
+              "id": "ec139a84-a358-4fff-85e6-5438f37ca837",
+              "name": "dealId",
+              "value": "={{ $('Prepare Invoice').item.json.dealId }}",
+              "type": "number"
+            },
+            {
+              "id": "586f86c3-ddb7-49ca-bbfd-4156b33af138",
+              "name": "personId",
+              "value": "={{ $('Prepare Invoice').item.json.personId }}",
+              "type": "number"
+            },
+            {
+              "id": "05783fab-bd51-4454-9bcf-4703179f0bcf",
+              "name": "title",
+              "value": "={{ $('Prepare Invoice').item.json.title }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "283c2a35-f217-4734-9b7f-dbf7c97007cb",
+      "name": "Create Invoice Item",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        3160,
+        40
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.stripe.com/v1/invoiceitems",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "stripeApi",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "customer",
+              "value": "={{ $json.customerId }}"
+            },
+            {
+              "name": "amount",
+              "value": "={{ $json.amountCents }}"
+            },
+            {
+              "name": "currency",
+              "value": "={{ $json.currency }}"
+            },
+            {
+              "name": "description",
+              "value": "={{ $json.description }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "stripeApi": {
+          "id": null,
+          "name": "Stripe account"
+        }
+      }
+    },
+    {
+      "id": "9b245216-246f-4ca7-b12e-7e526e852964",
+      "name": "Create Invoice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        3420,
+        40
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.stripe.com/v1/invoices",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "stripeApi",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "customer",
+              "value": "={{ $json.customer }}"
+            },
+            {
+              "name": "collection_method",
+              "value": "send_invoice"
+            },
+            {
+              "name": "days_until_due",
+              "value": "={{ $('Settings').first().json.daysUntilDue }}"
+            },
+            {
+              "name": "auto_advance",
+              "value": "false"
+            },
+            {
+              "name": "description",
+              "value": "={{ $('Prepare Invoice').item.json.description }}"
+            },
+            {
+              "name": "metadata[pipedrive_deal_id]",
+              "value": "={{ $('Prepare Invoice').item.json.dealId }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "stripeApi": {
+          "id": null,
+          "name": "Stripe account"
+        }
+      }
+    },
+    {
+      "id": "e2aa0698-4ec1-4e59-b86a-0e7b09326f89",
+      "name": "Finalize Invoice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        3680,
+        40
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.stripe.com/v1/invoices/{{ $json.id }}/finalize",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "stripeApi",
+        "options": {}
+      },
+      "credentials": {
+        "stripeApi": {
+          "id": null,
+          "name": "Stripe account"
+        }
+      }
+    },
+    {
+      "id": "c2913ae5-1fa7-41ee-982e-43ca0d0b9416",
+      "name": "Send Invoice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        3940,
+        40
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.stripe.com/v1/invoices/{{ $json.id }}/send",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "stripeApi",
+        "options": {}
+      },
+      "credentials": {
+        "stripeApi": {
+          "id": null,
+          "name": "Stripe account"
+        }
+      }
+    },
+    {
+      "id": "ae1cf9c5-6d25-4143-8f2f-54e65d3161d8",
+      "name": "Note on Deal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        4200,
+        40
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.pipedrive.com/v1/notes",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "pipedriveApi",
+        "options": {},
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ deal_id: $('Prepare Invoice').item.json.dealId, person_id: $('Prepare Invoice').item.json.personId, content: 'Stripe invoice ' + ($json.number || $json.id) + ' sent. Amount due ' + (($json.amount_due || 0) / 100) + ' ' + ($json.currency || '') + '. ' + ($json.hosted_invoice_url || '') }) }}"
+      },
+      "credentials": {
+        "pipedriveApi": {
+          "id": null,
+          "name": "Pipedrive account"
+        }
+      }
+    },
+    {
+      "id": "fc7ee93b-8db2-4d32-a84b-9479761c3f27",
+      "name": "Announce Invoice",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.5,
+      "position": [
+        4460,
+        40
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "={{ $('Settings').first().json.slackChannel }}"
+        },
+        "messageType": "text",
+        "text": "={{ '*Invoice sent* ' + $('Prepare Invoice').item.json.title + '\\n' + $('Prepare Invoice').item.json.currency.toUpperCase() + ' ' + $('Prepare Invoice').item.json.amountMajor + ' \u00b7 deal ' + $('Prepare Invoice').item.json.dealId + '\\n' + ($('Send Invoice').item.json.hosted_invoice_url || '') }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": null,
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "id": "be2ec4cb-a807-4d93-b99d-5ccf242b919b",
+      "name": "Skip No Person",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.5,
+      "position": [
+        1320,
+        360
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "={{ $('Settings').first().json.slackChannel }}"
+        },
+        "messageType": "text",
+        "text": "={{ '*Invoice skipped* ' + $json.title + ' (deal ' + $json.dealId + ') was won with no person attached.' }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": null,
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "id": "514e2a90-3739-4fc5-ba36-077ea35ced27",
+      "name": "Skip Not Billable",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.5,
+      "position": [
+        2100,
+        240
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "={{ $('Settings').first().json.slackChannel }}"
+        },
+        "messageType": "text",
+        "text": "={{ '*Invoice skipped* ' + $json.title + ' (deal ' + $json.dealId + '). Need a person email and a positive value. Email: ' + ($json.email || 'missing') + ', value: ' + $json.amountMajor + ' ' + $json.currency }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": null,
+          "name": "Slack account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Pipedrive Deal Event": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Normalize Deal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Deal": {
+      "main": [
+        [
+          {
+            "node": "Just Won?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Just Won?": {
+      "main": [
+        [
+          {
+            "node": "Has Person?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Has Person?": {
+      "main": [
+        [
+          {
+            "node": "Get Person",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip No Person",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Person": {
+      "main": [
+        [
+          {
+            "node": "Prepare Invoice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Invoice": {
+      "main": [
+        [
+          {
+            "node": "Billable?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Billable?": {
+      "main": [
+        [
+          {
+            "node": "Find Stripe Customer",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip Not Billable",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Stripe Customer": {
+      "main": [
+        [
+          {
+            "node": "Customer Exists?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Customer Exists?": {
+      "main": [
+        [
+          {
+            "node": "Use Existing Customer",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Stripe Customer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use Existing Customer": {
+      "main": [
+        [
+          {
+            "node": "Create Invoice Item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Stripe Customer": {
+      "main": [
+        [
+          {
+            "node": "Use New Customer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use New Customer": {
+      "main": [
+        [
+          {
+            "node": "Create Invoice Item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Invoice Item": {
+      "main": [
+        [
+          {
+            "node": "Create Invoice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Invoice": {
+      "main": [
+        [
+          {
+            "node": "Finalize Invoice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize Invoice": {
+      "main": [
+        [
+          {
+            "node": "Send Invoice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Invoice": {
+      "main": [
+        [
+          {
+            "node": "Note on Deal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Note on Deal": {
+      "main": [
+        [
+          {
+            "node": "Announce Invoice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "aee4bb77-7d79-4c58-a8d6-3e624afd8478",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
