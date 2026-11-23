@@ -1,0 +1,177 @@
+{
+  "name": "Support chatbot with memory",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Support chat with memory\n\nOpen the chat from the Chat Trigger node after you attach credentials.\n\nWindow buffer memory keeps the last 12 messages for the chat session id, so follow-up questions keep their context.\n\nThe calculator is there for shipping math. Wikipedia is only for public facts that are not shop policy.\n\nEdit the system message on the agent to replace the sample shop facts.",
+        "width": 400,
+        "height": 340,
+        "color": 4
+      },
+      "id": "8bfaff46-daac-40e7-b278-1299b4fb7143",
+      "name": "Setup notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -460,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "public": false,
+        "options": {}
+      },
+      "id": "63ad8760-b0ff-4601-ac05-f0cd7bc737e8",
+      "name": "Chat",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        280
+      ],
+      "webhookId": "9849bdb1-20a0-41c1-bf47-26e0b6b6ccb7"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.chatInput }}",
+        "options": {
+          "systemMessage": "You are the support chat for Northwind Goods, a small online shop. Answer only from the facts below and from what the customer has already said in this conversation. If the customer asks about a specific order, ask for the order id and say a person has to look that up. Do not invent tracking numbers or refunds.\n\nFacts:\n- Standard shipping is 3 to 5 business days. Express is 1 to 2 business days and costs 15 USD.\n- Free shipping starts at 75 USD before tax.\n- Returns are accepted within 30 days of delivery if the item is unused. Refunds go to the original payment method.\n- Password resets are sent from accounts@northwind.example. They expire after 30 minutes.\n- Support hours are 09:00 to 17:00 on weekdays, US Eastern.\n\nUse the calculator tool for any arithmetic, including whether an order qualifies for free shipping. Use Wikipedia only for a public fact that is not about this shop, and say that it is not a shop policy. Keep replies under 120 words.",
+          "maxIterations": 6
+        }
+      },
+      "id": "3d34b917-94e4-4757-aa81-4ef8b062099b",
+      "name": "Support Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2.2,
+      "position": [
+        320,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "id": "21775a3b-748d-4099-a264-47ec13bc3809",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        200,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "sessionIdType": "fromInput",
+        "contextWindowLength": 12
+      },
+      "id": "34c5808f-2ca7-4a90-8218-41d0983c4291",
+      "name": "Conversation Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        420,
+        520
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "236b11c4-950e-48d2-a442-918e138c9251",
+      "name": "Calculator",
+      "type": "@n8n/n8n-nodes-langchain.toolCalculator",
+      "typeVersion": 1,
+      "position": [
+        640,
+        520
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "acbca634-2de5-4e97-bd8a-3a33e5ad8450",
+      "name": "Wikipedia",
+      "type": "@n8n/n8n-nodes-langchain.toolWikipedia",
+      "typeVersion": 1,
+      "position": [
+        840,
+        520
+      ]
+    }
+  ],
+  "connections": {
+    "Chat": {
+      "main": [
+        [
+          {
+            "node": "Support Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Support Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conversation Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "Support Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculator": {
+      "ai_tool": [
+        [
+          {
+            "node": "Support Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wikipedia": {
+      "ai_tool": [
+        [
+          {
+            "node": "Support Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "active": false
+}
