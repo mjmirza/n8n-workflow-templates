@@ -1,0 +1,367 @@
+{
+  "name": "Stale Pipedrive deal reminders",
+  "nodes": [
+    {
+      "id": "1db6bcef-fc30-4b42-8c39-df54a456bb5e",
+      "name": "Setup notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -420,
+        40
+      ],
+      "parameters": {
+        "content": "## Stale deals\n\nWeekday 09:00. Open Pipedrive deals with no update in staleDays (default 14) are grouped by owner and posted to Slack.\n\ncreateTasks is false. Turn it on only if you want a Pipedrive task on every stale deal each weekday.",
+        "height": 240,
+        "width": 380,
+        "color": 4
+      }
+    },
+    {
+      "id": "17204667-f3b7-4e81-9228-720c6ba5fcfb",
+      "name": "Weekday Morning",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "weeksInterval": 1,
+              "triggerAtDay": [
+                1,
+                2,
+                3,
+                4,
+                5
+              ],
+              "triggerAtHour": 9,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "74419a1c-c84b-4304-8ffc-c271ca17c8c5",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        280,
+        300
+      ],
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e34ee601-e754-4bde-bbb7-0bbc6ed84f28",
+              "name": "slackChannel",
+              "value": "#sales-pipeline",
+              "type": "string"
+            },
+            {
+              "id": "5735436d-41e4-4be6-a036-0692864b1e7e",
+              "name": "staleDays",
+              "value": 14,
+              "type": "number"
+            },
+            {
+              "id": "e2412d8b-552b-43b4-a6ff-35a5e761dd61",
+              "name": "createTasks",
+              "value": false,
+              "type": "boolean"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "ea7a4b96-4a5b-46f6-84fd-d64297f18ffc",
+      "name": "Get Open Deals",
+      "type": "n8n-nodes-base.pipedrive",
+      "typeVersion": 1,
+      "position": [
+        540,
+        300
+      ],
+      "parameters": {
+        "authentication": "apiToken",
+        "resource": "deal",
+        "operation": "getAll",
+        "returnAll": true,
+        "filters": {
+          "status": "open"
+        }
+      },
+      "credentials": {
+        "pipedriveApi": {
+          "id": null,
+          "name": "Pipedrive account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "fa756470-ecfc-405a-a187-3b3ab5036a1c",
+      "name": "Find Stale Deals",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        820,
+        300
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const settings = $('Settings').first().json;\nconst staleDays = Number(settings.staleDays || 14);\nconst cutoff = Date.now() - staleDays * 24 * 60 * 60 * 1000;\nconst deals = $input.all().map((item) => item.json).filter((deal) => deal && deal.id);\nconst stale = [];\nfor (const deal of deals) {\n  const updated = Date.parse(deal.update_time || deal.add_time || '');\n  if (!Number.isFinite(updated) || updated > cutoff) continue;\n  stale.push({\n    id: deal.id,\n    title: deal.title || ('Deal ' + deal.id),\n    value: deal.value || 0,\n    currency: deal.currency || '',\n    owner: deal.owner_name || 'Unassigned',\n    org: deal.org_name || '',\n    person: deal.person_name || '',\n    ageDays: Math.floor((Date.now() - updated) / 86400000),\n  });\n}\nstale.sort((a, b) => b.ageDays - a.ageDays);\nconst byOwner = new Map();\nfor (const deal of stale) {\n  if (!byOwner.has(deal.owner)) byOwner.set(deal.owner, []);\n  byOwner.get(deal.owner).push(deal);\n}\nconst sections = [];\nfor (const [owner, rows] of byOwner) {\n  const lines = rows.slice(0, 8).map((deal) => '\u2022 ' + deal.title + ' (' + deal.currency + ' ' + deal.value + ') \u2014 ' + deal.ageDays + 'd idle' + (deal.org ? ' \u00b7 ' + deal.org : ''));\n  const extra = rows.length > 8 ? '\\n\u2022 +' + (rows.length - 8) + ' more' : '';\n  sections.push('*' + owner + '* (' + rows.length + ')\\n' + lines.join('\\n') + extra);\n}\nreturn [{\n  json: {\n    staleCount: stale.length,\n    openDealCount: deals.length,\n    slackText: stale.length ? '*Stale open deals* \u2014 no update in ' + staleDays + '+ days (' + stale.length + ' of ' + deals.length + ')\\n\\n' + sections.join('\\n\\n') : '',\n    deals: stale,\n    createTasks: settings.createTasks === true,\n  },\n}];"
+      }
+    },
+    {
+      "id": "78502313-1992-4005-bfa6-c2c87d98635c",
+      "name": "Any Stale?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1080,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "6ba091bd-d71b-49e9-8ee7-2ec0272def73",
+              "leftValue": "={{ $json.staleCount }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "d65aa927-4ee8-487c-8b6a-bd45063ffa41",
+      "name": "Post Reminder",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.5,
+      "position": [
+        1360,
+        160
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "={{ $('Settings').first().json.slackChannel }}"
+        },
+        "messageType": "text",
+        "text": "={{ $json.slackText }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": null,
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "id": "59cd297d-f140-4022-b338-66f003958974",
+      "name": "Tasks Enabled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1360,
+        420
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "7d797c20-d916-4d72-8041-e7f24c0524dd",
+              "leftValue": "={{ $json.createTasks }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "392c36a9-b4a5-4ae8-aeee-5ced612c3e98",
+      "name": "Expand Deals",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1620,
+        420
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const deals = $json.deals || [];\nreturn deals.map((deal) => ({ json: deal }));"
+      }
+    },
+    {
+      "id": "15af0c59-abf8-47ec-ac7d-b400c7413d8b",
+      "name": "Create Follow-up Task",
+      "type": "n8n-nodes-base.pipedrive",
+      "typeVersion": 1,
+      "position": [
+        1880,
+        420
+      ],
+      "parameters": {
+        "authentication": "apiToken",
+        "resource": "activity",
+        "operation": "create",
+        "subject": "={{ 'Follow up: ' + $json.title }}",
+        "done": "0",
+        "type": "task",
+        "additionalFields": {
+          "deal_id": "={{ $json.id }}",
+          "due_date": "={{ $now.plus({ days: 1 }).toFormat('yyyy-MM-dd') }}",
+          "note": "={{ 'Open deal has had no update for ' + $json.ageDays + ' days.' }}"
+        }
+      },
+      "credentials": {
+        "pipedriveApi": {
+          "id": null,
+          "name": "Pipedrive account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Weekday Morning": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Get Open Deals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Open Deals": {
+      "main": [
+        [
+          {
+            "node": "Find Stale Deals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Stale Deals": {
+      "main": [
+        [
+          {
+            "node": "Any Stale?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any Stale?": {
+      "main": [
+        [
+          {
+            "node": "Post Reminder",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Tasks Enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Tasks Enabled?": {
+      "main": [
+        [
+          {
+            "node": "Expand Deals",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Expand Deals": {
+      "main": [
+        [
+          {
+            "node": "Create Follow-up Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "5f04a5a3-fbc2-4203-b139-3ff49a70f2c9",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
