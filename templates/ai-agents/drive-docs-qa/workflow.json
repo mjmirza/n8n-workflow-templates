@@ -1,0 +1,390 @@
+{
+  "name": "Q&A over Google Drive docs",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Drive document Q&A\n\nLexical retrieval over Google Docs in one folder, then an answer that has to cite those files.\n\n1. Attach Google Drive and OpenAI credentials.\n2. Paste the folder id into Config. It is the last segment of the folder URL.\n3. Docs must be Google Docs. The Download node converts them to plain text.\n4. For a larger corpus, replace Retrieve Passages with a vector store and keep the same answer prompt.",
+        "width": 420,
+        "height": 320,
+        "color": 4
+      },
+      "id": "90dbd80d-c13e-496a-be5d-2cb50399a8ee",
+      "name": "Setup notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -460,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "drive-docs-qa",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "2ff909da-fbb0-4410-9269-a0f66cbd2be4",
+      "name": "Question Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "c437afeb-b89c-43a2-b0ea-7902a8440f37"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "2b21f1f6-2635-4fad-bd9d-6ccf81221a8d",
+              "name": "folderId",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "d7ac004c-0573-4ae7-8e02-05471377dfcb",
+              "name": "maxContextChars",
+              "value": 8000,
+              "type": "number"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "cc02a7a9-e1da-48b9-ab11-723d03add96a",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "operation": "search",
+        "searchMethod": "query",
+        "queryString": "={{ \"'\" + $('Config').item.json.folderId + \"' in parents and mimeType = 'application/vnd.google-apps.document' and trashed = false\" }}",
+        "returnAll": false,
+        "limit": 8,
+        "filter": {},
+        "options": {}
+      },
+      "id": "2fcd1b39-f096-4e26-ad1c-c2cf469c81d0",
+      "name": "Search Docs",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        480,
+        300
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b981351e-d278-4be0-a3e2-b172c6ec1b7c",
+              "leftValue": "={{ $json.id }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9a784631-4374-4b03-891e-c15ff7b28552",
+      "name": "Docs found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        740,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "file",
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.id }}",
+          "mode": "id"
+        },
+        "options": {
+          "googleFileConversion": {
+            "conversion": {
+              "docsToFormat": "text/plain"
+            }
+          }
+        }
+      },
+      "id": "33ddb265-5b0e-45a9-846d-08d4d9fb95f3",
+      "name": "Download Doc",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        980,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "binaryPropertyName": "data",
+        "options": {}
+      },
+      "id": "9a415847-1df8-4acb-950b-25f84edee1fd",
+      "name": "Extract Text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const question = String($('Config').first().json.question || '').trim();\nconst maxChars = Number($('Config').first().json.maxContextChars) || 8000;\nconst stop = new Set(['the','and','for','with','that','this','from','your','what','how','why','are','was','were','you','can','about','have','has','not','but','its','into','our']);\nconst terms = question.toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length > 2 && !stop.has(word));\nconst docs = $input.all();\nconst searched = $('Search Docs').all();\nconst chunks = [];\n\ndocs.forEach((item, index) => {\n  const text = String(item.json.data || item.json.text || '');\n  const fileName = (searched[index] && searched[index].json && searched[index].json.name) || ('document-' + (index + 1));\n  const parts = text.split(/\\n\\s*\\n/).map((part) => part.trim()).filter((part) => part.length > 40);\n  const sourceParts = parts.length ? parts : (text.trim() ? [text.trim()] : []);\n  sourceParts.forEach((part) => {\n    const words = new Set(part.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));\n    let score = 0;\n    for (const term of terms) {\n      if (words.has(term)) score += 1;\n    }\n    chunks.push({ fileName, score, text: part.slice(0, 1500) });\n  });\n});\n\nchunks.sort((a, b) => b.score - a.score);\nconst picked = [];\nlet used = 0;\nfor (const chunk of chunks) {\n  if (picked.length >= 6) break;\n  if (chunk.score === 0 && picked.length >= 2) continue;\n  if (used + chunk.text.length > maxChars) continue;\n  picked.push(chunk);\n  used += chunk.text.length;\n}\nif (!picked.length && chunks[0]) picked.push(chunks[0]);\n\nconst context = picked.map((chunk, index) => '[' + (index + 1) + '] ' + chunk.fileName + '\\n' + chunk.text).join('\\n\\n');\nconst sources = [];\nfor (const chunk of picked) {\n  if (!sources.includes(chunk.fileName)) sources.push(chunk.fileName);\n}\nreturn [{ json: { question, context, sources, chunkCount: picked.length } }];\n"
+      },
+      "id": "6ac3b3d2-944a-4a60-9ccc-3b88119035c4",
+      "name": "Retrieve Passages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Answer the question using only the context passages. If the passages do not contain the answer, say you do not know. Cite the file name for each claim you use. Do not use outside knowledge.\n\nQuestion:\n{{ $json.question }}\n\nContext:\n{{ $json.context }}"
+      },
+      "id": "63652260-5432-45a5-815f-ad2db5ffdbc7",
+      "name": "Answer From Context",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        1680,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "options": {
+          "temperature": 0
+        }
+      },
+      "id": "46003cea-2736-475d-ac21-7396e2835d33",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        1680,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const retrieved = $('Retrieve Passages').first().json;\nconst raw = $input.first().json;\nconst answer = typeof raw.text === 'string' ? raw.text : (typeof raw.output === 'string' ? raw.output : JSON.stringify(raw));\nreturn [{\n  json: {\n    question: retrieved.question,\n    answer,\n    sources: retrieved.sources || [],\n    chunkCount: retrieved.chunkCount || 0,\n  },\n}];\n"
+      },
+      "id": "180be18f-fbc4-4909-863f-aa2179715320",
+      "name": "Package Answer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1940,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "ede300ba-43c3-4ad9-810a-6ed2435c4568",
+      "name": "Reply With Answer",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2160,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ question: $('Config').item.json.question, answer: 'No Google Docs were found in the configured folder.', sources: [], chunkCount: 0 }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "ed0f0dc7-4e81-42ab-93b5-b9ecc224c8e0",
+      "name": "Reply No Docs",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        980,
+        460
+      ]
+    }
+  ],
+  "connections": {
+    "Question Webhook": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Search Docs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Docs": {
+      "main": [
+        [
+          {
+            "node": "Docs found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Docs found?": {
+      "main": [
+        [
+          {
+            "node": "Download Doc",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply No Docs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Doc": {
+      "main": [
+        [
+          {
+            "node": "Extract Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Text": {
+      "main": [
+        [
+          {
+            "node": "Retrieve Passages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retrieve Passages": {
+      "main": [
+        [
+          {
+            "node": "Answer From Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Answer From Context",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Answer From Context": {
+      "main": [
+        [
+          {
+            "node": "Package Answer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Package Answer": {
+      "main": [
+        [
+          {
+            "node": "Reply With Answer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "active": false
+}
