@@ -1,0 +1,429 @@
+{
+  "name": "Rate-limited batch API calls",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Rate-limited batch\n\nSet baseUrl on Config and Header Auth on both HTTP nodes.\nBatches of 5, then a 1 second wait.\nSlack only when the list call or a process call fails.",
+        "height": 180,
+        "width": 460,
+        "color": 4
+      },
+      "id": "7d72b33d-d1e4-5b54-a7c3-cb5d3cfdd310",
+      "name": "Setup",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1,
+              "triggerAtMinute": 10
+            }
+          ]
+        }
+      },
+      "id": "3fbeaadc-c0a2-5cab-bb28-bf64d2d7c5c3",
+      "name": "Hourly",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "21134d51-18cf-540e-8e43-98996d6ed1bf",
+              "name": "baseUrl",
+              "value": "https://api.example.com",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b58536d2-d754-54cb-b168-887f89bf1522",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        500,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.baseUrl.replace(/\\/$/, '') + '/v1/jobs?status=pending&limit=100' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 20000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "1a3180b5-c50c-56e9-8fd0-10bf45b5e27b",
+      "name": "List pending jobs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        760,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const config = $('Config').first().json;\nconst response = items[0].json;\nconst base = String(config.baseUrl || '').replace(/\\/$/, '');\nconst statusCode = response.statusCode;\n\nif (typeof statusCode !== 'number' || statusCode < 200 || statusCode >= 300) {\n  return [{ json: { fetchFailed: true, statusCode: statusCode == null ? null : statusCode, baseUrl: base } }];\n}\n\nconst body = response.body;\nconst jobs = Array.isArray(body) ? body : (body && (body.jobs || body.data)) || [];\nif (!Array.isArray(jobs) || jobs.length === 0) return [];\n\nreturn jobs\n  .filter((job) => job && job.id !== undefined && job.id !== null && String(job.id).length > 0)\n  .map((job) => ({\n    json: {\n      fetchFailed: false,\n      id: job.id,\n      url: base + '/v1/jobs/' + encodeURIComponent(String(job.id)) + '/process',\n    },\n  }));\n"
+      },
+      "id": "8a16e20d-0c74-5fa8-8578-81ad1bf4e13f",
+      "name": "Prepare jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1020,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "de537b6a-2d85-5403-ba15-7a6a1f0e9564",
+              "leftValue": "={{ $json.fetchFailed }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "fb27e82d-1fbe-59d3-bfa1-370fc8106f4c",
+      "name": "List request failed",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1280,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "accessToken",
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "#ops-alerts"
+        },
+        "text": "=*Job list failed* HTTP {{ $json.statusCode }}\n{{ $json.baseUrl }}/v1/jobs",
+        "otherOptions": {
+          "mrkdwn": true
+        }
+      },
+      "id": "3ae6b25f-9735-5ae9-b5fb-5bf161a71496",
+      "name": "Alert list failed",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        1560,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 5,
+        "options": {}
+      },
+      "id": "c8b5718e-fd01-5d3a-a039-d2ac1a1a719d",
+      "name": "Loop over jobs",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1560,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ id: $json.id }) }}",
+        "options": {
+          "timeout": 20000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "eb6a4d6b-70e0-57df-9cc5-42c0fc22cac9",
+      "name": "Process job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1820,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 1,
+        "unit": "seconds"
+      },
+      "id": "c2be1444-97ab-5435-bb03-d5436d784c59",
+      "name": "Wait 1 second",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2080,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const prepared = $('Prepare jobs').all();\nconst failed = [];\n\nfor (let i = 0; i < items.length; i++) {\n  const statusCode = items[i].json.statusCode;\n  const id = prepared[i] && prepared[i].json ? prepared[i].json.id : null;\n  if (typeof statusCode !== 'number' || statusCode < 200 || statusCode >= 300) {\n    failed.push({ id, statusCode: typeof statusCode === 'number' ? statusCode : null });\n  }\n}\n\nconst preview = failed.slice(0, 15).map((row) => String(row.id) + ' (HTTP ' + row.statusCode + ')').join('\\n');\nconst text = [\n  '*Batch process had failures*',\n  'Processed: ' + items.length,\n  'Failed: ' + failed.length,\n  preview,\n].filter(Boolean).join('\\n');\n\nreturn [{ json: { processed: items.length, failed: failed.length, anyFailed: failed.length > 0, text } }];\n"
+      },
+      "id": "71a627d4-8d6d-598f-8090-b5af8d910add",
+      "name": "Summarize results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1820,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "a2be1ce0-ee00-5dbd-80fe-f7e543ea2183",
+              "leftValue": "={{ $json.anyFailed }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "d231f8ff-c850-5baa-905e-0b0070dab9cc",
+      "name": "Any job failed",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2080,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "accessToken",
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "#ops-alerts"
+        },
+        "text": "={{ $json.text }}",
+        "otherOptions": {
+          "mrkdwn": true
+        }
+      },
+      "id": "5d76a79d-7f66-5eb7-b1c2-b5dc46060f84",
+      "name": "Alert job failures",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        2340,
+        260
+      ]
+    }
+  ],
+  "connections": {
+    "Hourly": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "List pending jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List pending jobs": {
+      "main": [
+        [
+          {
+            "node": "Prepare jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare jobs": {
+      "main": [
+        [
+          {
+            "node": "List request failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List request failed": {
+      "main": [
+        [
+          {
+            "node": "Alert list failed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop over jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop over jobs": {
+      "main": [
+        [
+          {
+            "node": "Summarize results",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Process job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process job": {
+      "main": [
+        [
+          {
+            "node": "Wait 1 second",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 1 second": {
+      "main": [
+        [
+          {
+            "node": "Loop over jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize results": {
+      "main": [
+        [
+          {
+            "node": "Any job failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any job failed": {
+      "main": [
+        [
+          {
+            "node": "Alert job failures",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
