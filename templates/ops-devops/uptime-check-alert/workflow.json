@@ -1,0 +1,216 @@
+{
+  "name": "Uptime check with alert",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Uptime check\n\nEdit the URL list in Build targets before activating.\nSlack is notified only when a check is outside HTTP 200-299.",
+        "height": 160,
+        "width": 420,
+        "color": 4
+      },
+      "id": "912132eb-ca00-5f23-9534-b51dfca7b146",
+      "name": "Setup",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "e60fc7fd-4f6d-5a5d-89b3-8260e5b2c5d4",
+      "name": "Every 5 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const targets = [\n  { name: 'Public site', url: 'https://example.com/health' },\n  { name: 'API', url: 'https://api.example.com/health' },\n];\n\nreturn targets.map((target) => ({ json: target }));\n"
+      },
+      "id": "b132eb90-6769-5b3e-ad72-52a0a1d3e4cd",
+      "name": "Build targets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "options": {
+          "timeout": 8000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "046c64ae-5d77-5a24-92d5-3dd2d4f9a82a",
+      "name": "Check URL",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        760,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const targets = $('Build targets').all();\nconst checkedAt = new Date().toISOString();\nconst output = [];\n\nfor (let i = 0; i < items.length; i++) {\n  const target = targets[i] ? targets[i].json : {};\n  const statusCode = items[i].json.statusCode;\n  const down = typeof statusCode !== 'number' || statusCode < 200 || statusCode >= 300;\n  output.push({\n    json: {\n      name: target.name || 'unnamed',\n      url: target.url || '',\n      statusCode: typeof statusCode === 'number' ? statusCode : null,\n      down,\n      checkedAt,\n    },\n  });\n}\n\nreturn output;\n"
+      },
+      "id": "0bf09509-2a23-5f55-a652-61f0ba13a701",
+      "name": "Classify result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1020,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "eff0545e-e4e0-553d-b1a6-d19799447b38",
+              "leftValue": "={{ $json.down }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "8cb298a1-069c-5bec-b2dc-43622dbd231e",
+      "name": "Is down",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1280,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "accessToken",
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "#ops-alerts"
+        },
+        "text": "=*DOWN* {{ $json.name }} returned HTTP {{ $json.statusCode }}\n{{ $json.url }}\nChecked {{ $json.checkedAt }}",
+        "otherOptions": {
+          "mrkdwn": true
+        }
+      },
+      "id": "36c7b723-66e1-53d8-9b49-1bf5964d1069",
+      "name": "Alert Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        1540,
+        200
+      ]
+    }
+  ],
+  "connections": {
+    "Every 5 minutes": {
+      "main": [
+        [
+          {
+            "node": "Build targets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build targets": {
+      "main": [
+        [
+          {
+            "node": "Check URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check URL": {
+      "main": [
+        [
+          {
+            "node": "Classify result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify result": {
+      "main": [
+        [
+          {
+            "node": "Is down",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is down": {
+      "main": [
+        [
+          {
+            "node": "Alert Slack",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
