@@ -1,0 +1,617 @@
+{
+  "name": "Blog post to social posts",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Blog post to social variants\n\nPOST a url, or POST html if you already have the article.\n\n1. Attach OpenAI, Slack, and Google Sheets credentials.\n2. Set spreadsheet id, sheet name, and Slack channel in Config.\n3. Sheet headers: SourceUrl, Title, LinkedIn, X, Newsletter, Hashtags.\n4. The X variant is trimmed to 280 characters on a word boundary.",
+        "width": 420,
+        "height": 280,
+        "color": 4
+      },
+      "id": "5d6549b8-ccc4-4a08-9b1c-38f6ef583a53",
+      "name": "Setup notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "blog-to-social",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "544101a4-41f4-4b97-a65b-0acfdb815226",
+      "name": "Article Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        280
+      ],
+      "webhookId": "b5cda135-ee04-4470-b10f-72a26e185cfd"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f88e146d-e261-4295-b6fd-ff83f1d22f55",
+              "name": "spreadsheetId",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "d6123a61-27a1-4127-818e-57976881bd4b",
+              "name": "sheetName",
+              "value": "SocialPosts",
+              "type": "string"
+            },
+            {
+              "id": "305ecf35-91be-4d07-8bc7-3b3e6a25f9ee",
+              "name": "slackChannel",
+              "value": "content",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "9f915b8c-37dd-48cf-8b22-8fbe7e0152ca",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "97a3e2b7-e826-4505-a1e3-09f394524ab5",
+              "leftValue": "={{ $json.url }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "01224023-e01e-47d3-80a6-1bba7705b74c",
+      "name": "Has URL?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        480,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 20000
+        }
+      },
+      "id": "d3b88fdb-4ddc-4143-ba75-5d1053720697",
+      "name": "Fetch Article",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        740,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "extractHtmlContent",
+        "sourceData": "json",
+        "dataPropertyName": "data",
+        "extractionValues": {
+          "values": [
+            {
+              "key": "title",
+              "cssSelector": "title",
+              "returnValue": "text",
+              "returnArray": false
+            },
+            {
+              "key": "article",
+              "cssSelector": "article",
+              "returnValue": "text",
+              "returnArray": false
+            },
+            {
+              "key": "body",
+              "cssSelector": "body",
+              "returnValue": "text",
+              "returnArray": false
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "e39f54ad-0e37-4c52-9d1f-cfc9adb28e77",
+      "name": "Extract Article",
+      "type": "n8n-nodes-base.html",
+      "typeVersion": 1.2,
+      "position": [
+        980,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $input.first().json;\nconst title = String(item.title || '').trim();\nconst article = String(item.article || '').trim();\nconst body = String(item.body || '').trim();\nconst text = (article || body || String(item.data || item.html || '')).replace(/\\s+/g, ' ').trim().slice(0, 12000);\nconst sourceUrl = String($('Config').first().json.url || '');\nreturn [{ json: { title, text, sourceUrl, hasText: text.length > 80 } }];\n"
+      },
+      "id": "12f40c5b-db16-490b-8c13-74c35704b917",
+      "name": "Clean From Fetch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1220,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const raw = $input.first().json;\nconst html = String(raw.html || raw.text || '');\nconst text = html.replace(/<script[\\s\\S]*?<\\/script>/gi, ' ').replace(/<style[\\s\\S]*?<\\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').trim().slice(0, 12000);\nreturn [{ json: { title: String(raw.title || ''), text, sourceUrl: String(raw.url || ''), hasText: text.length > 80 } }];\n"
+      },
+      "id": "28f62b1d-bb30-42e8-8a5f-45b500c37ad4",
+      "name": "Clean From Body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        740,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ba2e29cb-00ec-4b29-bf9a-a51025dae9bc",
+              "leftValue": "={{ $json.hasText }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cb7ce9bf-ab24-4fd6-8549-60d5c1d3d43c",
+      "name": "Enough text?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1460,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Repurpose this article into three ready-to-edit posts. Do not add claims that are not in the article. LinkedIn: 80 to 140 words, first line is the hook. X: one post, must stay under 280 characters. Newsletter: two sentences. Hashtags: up to 4 short topic tags without the hash mark.\n\nTitle: {{ $json.title }}\nSource: {{ $json.sourceUrl }}\n\n{{ $json.text }}",
+        "hasOutputParser": true
+      },
+      "id": "fed61423-653b-40f9-b874-8860986e9162",
+      "name": "Write Social Posts",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        1700,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "options": {
+          "temperature": 0.4
+        }
+      },
+      "id": "d14e00e5-5908-4e57-a6ce-8d72b15be90f",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        1700,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "schemaType": "fromJson",
+        "jsonSchemaExample": "{\n  \"title\": \"Why onboarding stalls on day two\",\n  \"linkedin\": \"Most onboarding checklists die after the first login. Here is the day-two email we send instead.\",\n  \"x\": \"Day-two onboarding mail outperforms another product tour. Send one job, not twelve links.\",\n  \"newsletter\": \"Teams that send one specific day-two task keep more trials than teams that send a tour.\",\n  \"hashtags\": [\n    \"onboarding\",\n    \"saas\"\n  ]\n}"
+      },
+      "id": "53bf3028-321f-4368-970f-4b744e3007b7",
+      "name": "Post Schema",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.2,
+      "position": [
+        1940,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const raw = $input.first().json;\nconst parsed = raw.linkedin ? raw : (raw.output || {});\nlet x = String(parsed.x || '').trim();\nif (x.length > 280) {\n  x = x.slice(0, 277).replace(/\\s+\\S*$/, '') + '...';\n}\nconst hashtags = Array.isArray(parsed.hashtags) ? parsed.hashtags.map((tag) => String(tag).replace(/^#/, '')) : [];\nconst source = $('Clean Article').first().json;\nreturn [{\n  json: {\n    sourceUrl: source.sourceUrl,\n    title: String(parsed.title || source.title || ''),\n    linkedin: String(parsed.linkedin || '').trim(),\n    x,\n    xLength: x.length,\n    newsletter: String(parsed.newsletter || '').trim(),\n    hashtags,\n    slackText: '*Social variants*\\n' + (source.sourceUrl ? source.sourceUrl + '\\n\\n' : '\\n')\n      + '*LinkedIn*\\n' + String(parsed.linkedin || '') + '\\n\\n'\n      + '*X* (' + x.length + ')\\n' + x + '\\n\\n'\n      + '*Newsletter*\\n' + String(parsed.newsletter || '') + '\\n\\n'\n      + (hashtags.length ? '#' + hashtags.join(' #') : ''),\n  },\n}];\n"
+      },
+      "id": "83a13da1-d795-4d85-a418-80360c6f05c9",
+      "name": "Fit To Channels",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "accessToken",
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "={{ $('Config').item.json.slackChannel }}"
+        },
+        "text": "={{ $json.slackText }}",
+        "otherOptions": {}
+      },
+      "id": "49b7f19e-8fc4-4c3f-a603-d45879f24491",
+      "name": "Post Variants",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        2220,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config').item.json.spreadsheetId }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $('Config').item.json.sheetName }}",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "SourceUrl": "={{ $json.sourceUrl }}",
+            "Title": "={{ $json.title }}",
+            "LinkedIn": "={{ $json.linkedin }}",
+            "X": "={{ $json.x }}",
+            "Newsletter": "={{ $json.newsletter }}",
+            "Hashtags": "={{ $json.hashtags.join(', ') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "SourceUrl",
+              "displayName": "SourceUrl",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Title",
+              "displayName": "Title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "LinkedIn",
+              "displayName": "LinkedIn",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "X",
+              "displayName": "X",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Newsletter",
+              "displayName": "Newsletter",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Hashtags",
+              "displayName": "Hashtags",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c470f66a-9682-4300-aa27-ec2f98a652ca",
+      "name": "Log Variants",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2220,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "0ca1e8de-e9c8-441c-82c7-a4b51d38e428",
+      "name": "Reply With Posts",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2460,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: 'Not enough article text to repurpose. Send a url or an html field with the article.' }) }}",
+        "options": {
+          "responseCode": 422
+        }
+      },
+      "id": "08d9596b-c9f0-4d28-a5ef-694f5e7ad960",
+      "name": "Reply Too Short",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1700,
+        560
+      ]
+    }
+  ],
+  "connections": {
+    "Article Webhook": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Has URL?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has URL?": {
+      "main": [
+        [
+          {
+            "node": "Fetch Article",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Clean From Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Article": {
+      "main": [
+        [
+          {
+            "node": "Extract Article",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Article": {
+      "main": [
+        [
+          {
+            "node": "Clean From Fetch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean From Fetch": {
+      "main": [
+        [
+          {
+            "node": "Enough text?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean From Body": {
+      "main": [
+        [
+          {
+            "node": "Enough text?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enough text?": {
+      "main": [
+        [
+          {
+            "node": "Write Social Posts",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply Too Short",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Write Social Posts",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Schema": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Write Social Posts",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Social Posts": {
+      "main": [
+        [
+          {
+            "node": "Fit To Channels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fit To Channels": {
+      "main": [
+        [
+          {
+            "node": "Post Variants",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Variants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Variants": {
+      "main": [
+        [
+          {
+            "node": "Reply With Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "active": false
+}
