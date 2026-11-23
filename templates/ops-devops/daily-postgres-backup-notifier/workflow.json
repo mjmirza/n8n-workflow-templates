@@ -1,0 +1,139 @@
+{
+  "name": "Daily Postgres backup notifier",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Daily Postgres archive check\n\nUses pg_stat_archiver. The database role needs pg_monitor.\nSlack gets an OK or STALE summary every day.",
+        "height": 160,
+        "width": 420,
+        "color": 4
+      },
+      "id": "c62eb215-e2b0-5a6d-be9e-b0932b69470c",
+      "name": "Setup",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 6,
+              "triggerAtMinute": 15
+            }
+          ]
+        }
+      },
+      "id": "da1ea9ce-81ca-5df6-b68b-3ba42275ea18",
+      "name": "Daily 06:15",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "database",
+        "operation": "executeQuery",
+        "query": "SELECT\n  current_database() AS database_name,\n  pg_is_in_recovery() AS in_recovery,\n  last_archived_time,\n  last_failed_time,\n  archived_count,\n  failed_count,\n  CASE\n    WHEN last_archived_time IS NULL THEN NULL\n    ELSE EXTRACT(EPOCH FROM (now() - last_archived_time))\n  END AS seconds_since_last_archive,\n  pg_size_pretty(pg_database_size(current_database())) AS database_size,\n  now() AS checked_at\nFROM pg_stat_archiver",
+        "options": {}
+      },
+      "id": "2eab0b68-cddd-5864-af3f-2e4d789ea487",
+      "name": "Read archive stats",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const row = items[0].json;\nconst seconds = row.seconds_since_last_archive === null || row.seconds_since_last_archive === undefined\n  ? null\n  : Number(row.seconds_since_last_archive);\nconst neverArchived = seconds === null || Number.isNaN(seconds);\nconst stale = neverArchived || seconds > 86400;\nconst lastFailed = row.last_failed_time ? new Date(row.last_failed_time).getTime() : 0;\nconst lastArchived = row.last_archived_time ? new Date(row.last_archived_time).getTime() : 0;\nconst failedAfterSuccess = lastFailed > 0 && lastFailed > lastArchived;\nconst unhealthy = stale || failedAfterSuccess;\n\nconst age = neverArchived ? 'never' : Math.round(seconds / 60) + ' minutes ago';\nconst lines = [\n  (unhealthy ? '*STALE*' : '*OK*') + ' Postgres archive check for `' + row.database_name + '`',\n  'Last archived: ' + (row.last_archived_time || 'never') + ' (' + age + ')',\n  'Last failure: ' + (row.last_failed_time || 'none'),\n  'Archived count: ' + row.archived_count + ', failed count: ' + row.failed_count,\n  'Database size: ' + row.database_size,\n  'In recovery: ' + row.in_recovery,\n  'Checked: ' + row.checked_at,\n];\n\nreturn [{ json: { text: lines.join('\\n'), unhealthy } }];\n"
+      },
+      "id": "aae6f5e1-024f-55f2-a2fd-f08053a3b96b",
+      "name": "Build status message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        760,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "accessToken",
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "#ops-alerts"
+        },
+        "text": "={{ $json.text }}",
+        "otherOptions": {
+          "mrkdwn": true
+        }
+      },
+      "id": "2e80e4fe-c5a7-5870-8e48-020c3f1ea2f7",
+      "name": "Post daily status",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        1020,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Daily 06:15": {
+      "main": [
+        [
+          {
+            "node": "Read archive stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read archive stats": {
+      "main": [
+        [
+          {
+            "node": "Build status message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build status message": {
+      "main": [
+        [
+          {
+            "node": "Post daily status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
