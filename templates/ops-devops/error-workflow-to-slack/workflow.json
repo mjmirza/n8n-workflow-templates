@@ -1,0 +1,101 @@
+{
+  "name": "Error workflow to Slack",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Error workflow\n\nActivate this workflow, then select it as the Error Workflow on every workflow that should report here.",
+        "height": 140,
+        "width": 440,
+        "color": 4
+      },
+      "id": "36513db9-066c-51ad-849e-889fad3aa1b5",
+      "name": "Setup",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        40
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "970ac30a-9d28-5a2f-a232-ab370ddd5208",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const execution = items[0].json.execution || {};\nconst error = execution.error || {};\nconst workflow = items[0].json.workflow || {};\nconst lines = [\n  '*Workflow error*',\n  'Workflow: ' + (workflow.name || 'unknown') + ' (' + (workflow.id || 'n/a') + ')',\n  'Execution: ' + (execution.id || 'n/a') + (execution.mode ? ' (' + execution.mode + ')' : ''),\n  'Last node: ' + (execution.lastNodeExecuted || 'unknown'),\n  'Message: ' + (error.message || 'unknown error'),\n];\nif (execution.url) {\n  lines.push('Open: ' + execution.url);\n}\nreturn [{ json: { text: lines.join('\\n') } }];\n"
+      },
+      "id": "1c45101d-3db2-5759-90c8-da7ba19087ce",
+      "name": "Build error message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "accessToken",
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "#ops-alerts"
+        },
+        "text": "={{ $json.text }}",
+        "otherOptions": {
+          "mrkdwn": true
+        }
+      },
+      "id": "2ec1555c-8eba-5927-b892-a8d9f8cd281c",
+      "name": "Post error to Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        760,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Build error message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build error message": {
+      "main": [
+        [
+          {
+            "node": "Post error to Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
