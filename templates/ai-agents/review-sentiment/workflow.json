@@ -1,0 +1,378 @@
+{
+  "name": "Review sentiment analysis",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Review sentiment\n\nReads up to 25 sheet rows that have ReviewText and ReviewId and an empty Sentiment cell.\n\nHeaders: ReviewId, Product, ReviewText, Sentiment, Strength, Confidence, ReviewedAt.\n\nNegative reviews are also posted to Slack. The sheet update uses ReviewId as the match key, so do not leave it blank.",
+        "width": 420,
+        "height": 280,
+        "color": 4
+      },
+      "id": "0f2bb125-65a0-4a68-8ae7-b6639cf8f2c9",
+      "name": "Setup notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -460,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "98c74d62-7028-4327-87aa-d021bae88033",
+      "name": "Hourly",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        240
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "787ae46f-d09a-4b36-826a-c59b0772f97e",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "690f5336-8e70-4c02-b159-b9f484e32eac",
+              "name": "spreadsheetId",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "abd8ca9d-3d02-468c-95d4-37e3ab21889f",
+              "name": "sheetName",
+              "value": "Reviews",
+              "type": "string"
+            },
+            {
+              "id": "0f0e4114-7a8f-42df-ac54-ca294071303d",
+              "name": "slackChannel",
+              "value": "review-alerts",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "caeb36ed-2529-4332-8dc8-7ff250dd62ba",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config').item.json.spreadsheetId }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $('Config').item.json.sheetName }}",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "fc9869b6-5318-4709-881c-a0876cf24572",
+      "name": "Read Reviews",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        480,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const rows = [];\nfor (const item of $input.all()) {\n  const review = String(item.json.ReviewText || item.json.reviewText || '').trim();\n  const sentiment = String(item.json.Sentiment || item.json.sentiment || '').trim();\n  const reviewId = String(item.json.ReviewId || item.json.reviewId || '').trim();\n  if (!review || !reviewId || sentiment) continue;\n  rows.push({\n    json: {\n      ReviewId: reviewId,\n      Product: String(item.json.Product || item.json.product || ''),\n      ReviewText: review.slice(0, 4000),\n    },\n  });\n  if (rows.length >= 25) break;\n}\nreturn rows;\n"
+      },
+      "id": "b15852f3-0269-45cb-a11e-e0867cc64999",
+      "name": "Unscored Reviews",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "inputText": "={{ $json.ReviewText }}",
+        "options": {
+          "includeDetailedResults": true
+        }
+      },
+      "id": "fb03592f-0dee-4bcb-901f-0e7cbd8ad841",
+      "name": "Score Sentiment",
+      "type": "@n8n/n8n-nodes-langchain.sentimentAnalysis",
+      "typeVersion": 1.1,
+      "position": [
+        980,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "options": {
+          "temperature": 0
+        }
+      },
+      "id": "281b9ef3-f41d-4797-b6ad-f80c7f0583f9",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        980,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config').item.json.spreadsheetId }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $('Config').item.json.sheetName }}",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ReviewId": "={{ $json.ReviewId }}",
+            "Sentiment": "={{ $json.sentimentAnalysis.category }}",
+            "Strength": "={{ $json.sentimentAnalysis.strength }}",
+            "Confidence": "={{ $json.sentimentAnalysis.confidence }}",
+            "ReviewedAt": "={{ $now.toISO() }}"
+          },
+          "matchingColumns": [
+            "ReviewId"
+          ],
+          "schema": [
+            {
+              "id": "ReviewId",
+              "displayName": "ReviewId",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Sentiment",
+              "displayName": "Sentiment",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Strength",
+              "displayName": "Strength",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Confidence",
+              "displayName": "Confidence",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "ReviewedAt",
+              "displayName": "ReviewedAt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0fe8c8dd-6c0e-4102-a401-7fba86e6977e",
+      "name": "Update Review",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1280,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "accessToken",
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "={{ $('Config').item.json.slackChannel }}"
+        },
+        "text": "=Negative review *{{ $json.ReviewId }}* ({{ $json.Product }})\nStrength {{ $json.sentimentAnalysis.strength }}, confidence {{ $json.sentimentAnalysis.confidence }}\n{{ $json.ReviewText }}",
+        "otherOptions": {}
+      },
+      "id": "30f50de1-8793-4292-89ae-6a6b37f61e49",
+      "name": "Alert Negative",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        1280,
+        560
+      ]
+    }
+  ],
+  "connections": {
+    "Hourly": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Read Reviews",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Reviews": {
+      "main": [
+        [
+          {
+            "node": "Unscored Reviews",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unscored Reviews": {
+      "main": [
+        [
+          {
+            "node": "Score Sentiment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Score Sentiment",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score Sentiment": {
+      "main": [
+        [
+          {
+            "node": "Update Review",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Review",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Review",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Alert Negative",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "active": false
+}
