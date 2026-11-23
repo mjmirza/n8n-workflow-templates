@@ -1,0 +1,345 @@
+{
+  "name": "Gmail reply drafts",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Gmail reply drafts\n\nPolls unread mail, writes a reply, and saves it as a Gmail draft in the same thread. It does not send.\n\n1. Attach Gmail, OpenAI, and Slack credentials.\n2. Set slackChannel in Config.\n3. Skip automated senders happens before the model call.\n4. After a draft is created the message is marked read so the next poll does not draft it again.",
+        "width": 420,
+        "height": 300,
+        "color": 4
+      },
+      "id": "53b0f0c4-57dd-41ee-ac15-4cf73a868e74",
+      "name": "Setup notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -480,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": true,
+        "filters": {
+          "q": "is:unread -category:promotions -category:social"
+        },
+        "options": {}
+      },
+      "id": "8650fce9-9785-4d06-80e3-58368f6b45af",
+      "name": "Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "027b4f13-73fd-4622-b6f0-d815c46ead96",
+              "name": "slackChannel",
+              "value": "reply-drafts",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "9140cbf6-d179-4e5e-bc1d-1876766b7ba0",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const results = [];\nfor (const item of $input.all()) {\n  const from = String(item.json.from || item.json.From || '');\n  const subject = String(item.json.subject || '(no subject)');\n  const replySubject = /^re:/i.test(subject) ? subject : 'Re: ' + subject;\n  const emailMatch = from.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}/i);\n  const to = emailMatch ? emailMatch[0] : '';\n  const automated = /noreply|no-reply|mailer-daemon|notifications@/i.test(from);\n  results.push({\n    json: {\n      id: item.json.id,\n      threadId: item.json.threadId,\n      from,\n      to,\n      subject: replySubject,\n      originalSubject: subject,\n      snippet: String(item.json.snippet || item.json.textSnippet || '').slice(0, 2000),\n      automated,\n    },\n  });\n}\nreturn results;\n"
+      },
+      "id": "1beef79e-438d-470a-a1bf-83db2fc12351",
+      "name": "Prepare Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "630d39f6-4e48-4f7f-a00c-95b9fe1ccb24",
+              "leftValue": "={{ $json.to }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "79619106-416b-4d86-af33-0cb50f6e67a3",
+              "leftValue": "={{ $json.automated }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "11252b23-286b-44cb-8d1e-e290da0156b0",
+      "name": "Worth a draft?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        720,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Write a reply the mailbox owner can send after a quick edit. Use the subject and snippet only. Do not invent order numbers, refunds, or promises that are not implied by the snippet. If the snippet is not enough, ask one specific question. Plain text, no subject line, no signature block.\n\nFrom: {{ $json.from }}\nSubject: {{ $json.originalSubject }}\n\n{{ $json.snippet }}"
+      },
+      "id": "5b37bbf2-c89a-4843-afa2-260cd397f3b0",
+      "name": "Write Reply",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        960,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "id": "6885fcb7-de16-4dbc-b3dc-3ffa05039b4c",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        960,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const mail = $('Prepare Message').first().json;\nconst raw = $input.first().json;\nconst body = (typeof raw.text === 'string' ? raw.text : String(raw.output || '')).trim();\nreturn [{\n  json: {\n    ...mail,\n    body,\n    ready: Boolean(mail.to) && !mail.automated && body.length > 0,\n  },\n}];\n"
+      },
+      "id": "6ccfe223-4e30-43ad-8f66-835d304c268e",
+      "name": "Assemble Draft",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1220,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "draft",
+        "operation": "create",
+        "subject": "={{ $json.subject }}",
+        "emailType": "text",
+        "message": "={{ $json.body }}",
+        "options": {
+          "sendTo": "={{ $json.to }}",
+          "threadId": "={{ $json.threadId }}"
+        }
+      },
+      "id": "3203515a-e18f-4b69-8c83-07a844c17adf",
+      "name": "Create Gmail Draft",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1460,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "markAsRead",
+        "messageId": "={{ $('Prepare Message').item.json.id }}"
+      },
+      "id": "8131d876-7084-4b65-8617-fdb3dacda7fe",
+      "name": "Mark As Read",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1700,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "accessToken",
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "={{ $('Config').item.json.slackChannel }}"
+        },
+        "text": "=Draft saved, not sent.\n*{{ $('Assemble Draft').item.json.subject }}*\nTo: {{ $('Assemble Draft').item.json.to }}\n\n{{ $('Assemble Draft').item.json.body }}",
+        "otherOptions": {}
+      },
+      "id": "51bb1661-852e-44c7-a93e-d51a85a727c5",
+      "name": "Notify Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        1940,
+        160
+      ]
+    }
+  ],
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Prepare Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Message": {
+      "main": [
+        [
+          {
+            "node": "Worth a draft?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Worth a draft?": {
+      "main": [
+        [
+          {
+            "node": "Write Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Write Reply",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Reply": {
+      "main": [
+        [
+          {
+            "node": "Assemble Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assemble Draft": {
+      "main": [
+        [
+          {
+            "node": "Create Gmail Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Gmail Draft": {
+      "main": [
+        [
+          {
+            "node": "Mark As Read",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark As Read": {
+      "main": [
+        [
+          {
+            "node": "Notify Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "active": false
+}
