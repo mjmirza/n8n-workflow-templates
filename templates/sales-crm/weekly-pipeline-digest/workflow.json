@@ -1,0 +1,336 @@
+{
+  "name": "Weekly Pipedrive pipeline digest",
+  "nodes": [
+    {
+      "id": "b780f15d-6233-4025-9fc9-13c43fa7ba20",
+      "name": "Setup notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -420,
+        40
+      ],
+      "parameters": {
+        "content": "## Weekly pipeline digest\n\nMonday 08:00. All open Pipedrive deals, grouped by stage, with idle deals called out. Sends email and a short Slack summary even when the pipeline is empty.",
+        "height": 200,
+        "width": 380,
+        "color": 4
+      }
+    },
+    {
+      "id": "e19c1dcc-b38f-4032-8e57-ffdf5548cad4",
+      "name": "Monday Morning",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "weeksInterval": 1,
+              "triggerAtDay": [
+                1
+              ],
+              "triggerAtHour": 8,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "28959447-c023-4513-bd0a-0eb325298afb",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        280,
+        300
+      ],
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e90d6a62-efa7-4e92-9cc2-f44d7a657fbc",
+              "name": "slackChannel",
+              "value": "#sales-pipeline",
+              "type": "string"
+            },
+            {
+              "id": "64646a6b-4f9c-4879-b374-6c03fde39277",
+              "name": "digestEmail",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "28bccb5a-ade9-4fca-b3a5-818d991c2def",
+              "name": "staleDays",
+              "value": 14,
+              "type": "number"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "1d5b3ed5-5bdd-4ab1-96c5-e650af2bf418",
+      "name": "Get Open Deals",
+      "type": "n8n-nodes-base.pipedrive",
+      "typeVersion": 1,
+      "position": [
+        560,
+        160
+      ],
+      "parameters": {
+        "authentication": "apiToken",
+        "resource": "deal",
+        "operation": "getAll",
+        "returnAll": true,
+        "filters": {
+          "status": "open"
+        }
+      },
+      "credentials": {
+        "pipedriveApi": {
+          "id": null,
+          "name": "Pipedrive account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "908c6178-a528-4d7f-bdc2-ce82944afeb8",
+      "name": "Get Stages",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        560,
+        460
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.pipedrive.com/v1/stages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "pipedriveApi",
+        "options": {}
+      },
+      "credentials": {
+        "pipedriveApi": {
+          "id": null,
+          "name": "Pipedrive account"
+        }
+      }
+    },
+    {
+      "id": "cb42bc88-4a4f-4516-97c3-2afa02a506fd",
+      "name": "Collect Deals",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        840,
+        160
+      ],
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "deals",
+        "include": "allFields",
+        "options": {}
+      }
+    },
+    {
+      "id": "cb2188cc-418e-4dee-bab6-b494fa29ee12",
+      "name": "Join Pipeline",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1100,
+        300
+      ],
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      }
+    },
+    {
+      "id": "55f2d2d8-9702-401a-84ee-1b3ee79cbbf8",
+      "name": "Build Digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        300
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const settings = $('Settings').first().json;\nconst staleDays = Number(settings.staleDays || 14);\nconst cutoff = Date.now() - staleDays * 24 * 60 * 60 * 1000;\nconst stageRows = $('Get Stages').first().json.data || [];\nconst stageName = {};\nfor (const stage of stageRows) stageName[stage.id] = stage.name || ('Stage ' + stage.id);\nconst deals = ($('Collect Deals').first().json.deals || []).filter((deal) => deal && deal.id);\nconst groups = new Map();\nlet staleCount = 0;\nconst byCurrency = {};\nfor (const deal of deals) {\n  const stage = stageName[deal.stage_id] || ('Stage ' + (deal.stage_id || '?'));\n  if (!groups.has(stage)) groups.set(stage, { count: 0, value: 0, currency: deal.currency || '' });\n  const bucket = groups.get(stage);\n  bucket.count += 1;\n  bucket.value += Number(deal.value || 0);\n  const currency = deal.currency || 'USD';\n  byCurrency[currency] = (byCurrency[currency] || 0) + Number(deal.value || 0);\n  const updated = Date.parse(deal.update_time || deal.add_time || '');\n  if (Number.isFinite(updated) && updated <= cutoff) staleCount += 1;\n}\nconst top = deals\n  .slice()\n  .sort((a, b) => Number(b.value || 0) - Number(a.value || 0))\n  .slice(0, 5);\nconst money = Object.entries(byCurrency).map(([currency, value]) => currency + ' ' + value).join(', ') || '0';\nconst stageLines = [...groups.entries()].sort((a, b) => b[1].value - a[1].value);\nconst stageText = stageLines.map(([name, bucket]) => '\u2022 ' + name + ': ' + bucket.count + ' \u00b7 ' + bucket.value).join('\\n');\nconst slackText = '*Weekly pipeline* ' + deals.length + ' open deal(s) \u00b7 ' + money + '\\nIdle ' + staleDays + '+ days: ' + staleCount + '\\n' + stageText;\nconst html = [\n  '<h2>Weekly pipeline</h2>',\n  '<p>' + deals.length + ' open deal(s). Value by currency: ' + money + '.</p>',\n  '<p>Deals with no update in ' + staleDays + '+ days: <strong>' + staleCount + '</strong>.</p>',\n  '<h3>By stage</h3><ul>',\n  stageLines.map(([name, bucket]) => '<li>' + name + ': ' + bucket.count + ' deal(s), ' + bucket.value + '</li>').join(''),\n  '</ul><h3>Largest open deals</h3><ol>',\n  top.map((deal) => '<li>' + (deal.title || deal.id) + ' \u2014 ' + (deal.currency || '') + ' ' + (deal.value || 0) + ' \u00b7 ' + (deal.owner_name || 'unassigned') + '</li>').join(''),\n  '</ol>',\n].join('');\nreturn [{\n  json: {\n    slackText,\n    html,\n    subject: 'Pipeline digest: ' + deals.length + ' open, ' + staleCount + ' idle',\n    to: settings.digestEmail,\n  },\n}];"
+      }
+    },
+    {
+      "id": "820432e5-47cc-4036-9ed2-1e0914144e98",
+      "name": "Post Digest",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.5,
+      "position": [
+        1640,
+        180
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "={{ $('Settings').first().json.slackChannel }}"
+        },
+        "messageType": "text",
+        "text": "={{ $json.slackText }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": null,
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "id": "c58551ca-3cf7-489f-983f-4819d8608091",
+      "name": "Email Digest",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1640,
+        420
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "html",
+        "message": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": null,
+          "name": "Gmail account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Monday Morning": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Get Open Deals",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Stages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Open Deals": {
+      "main": [
+        [
+          {
+            "node": "Collect Deals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Deals": {
+      "main": [
+        [
+          {
+            "node": "Join Pipeline",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Stages": {
+      "main": [
+        [
+          {
+            "node": "Join Pipeline",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Join Pipeline": {
+      "main": [
+        [
+          {
+            "node": "Build Digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Digest": {
+      "main": [
+        [
+          {
+            "node": "Post Digest",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Email Digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "3c62c7ea-6cb0-4fa9-899c-3e9a33259ff1",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
