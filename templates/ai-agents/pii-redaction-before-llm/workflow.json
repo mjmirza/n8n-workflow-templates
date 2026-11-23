@@ -1,0 +1,254 @@
+{
+  "name": "Redact personal data before an LLM call",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Redact personal data before the model\n\nEmails, US phones, SSNs, Luhn-valid card numbers, and IPv4 addresses are replaced with tokens. The original text is not sent to the model and is not returned.\n\nAttach an OpenAI credential on the chat model. If the model output still matches a personal-data pattern, the response is blocked and the model text is discarded.",
+        "width": 400,
+        "height": 300,
+        "color": 4
+      },
+      "id": "9c75a106-dcd5-4c8f-9500-26b76c5a677d",
+      "name": "Setup notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -420,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "pii-redaction",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "0c0ecddb-19a9-4b74-9b24-74078fba9442",
+      "name": "Document Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "6751693c-22c7-4cc8-a1a5-ce3e71ddb430"
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "function luhnOk(digits) {\n  let sum = 0;\n  let alt = false;\n  for (let i = digits.length - 1; i >= 0; i--) {\n    let n = digits.charCodeAt(i) - 48;\n    if (alt) {\n      n *= 2;\n      if (n > 9) n -= 9;\n    }\n    sum += n;\n    alt = !alt;\n  }\n  return sum % 10 === 0;\n}\n\nfunction redact(text) {\n  const counts = { email: 0, phone: 0, ssn: 0, card: 0, ipv4: 0 };\n  let out = String(text || '');\n  const swap = (pattern, label, key) => {\n    out = out.replace(pattern, () => {\n      counts[key] += 1;\n      return '[' + label + '_' + counts[key] + ']';\n    });\n  };\n  swap(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}/gi, 'EMAIL', 'email');\n  swap(/\\b\\d{3}-\\d{2}-\\d{4}\\b/g, 'SSN', 'ssn');\n  swap(/\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b/g, 'IP', 'ipv4');\n  swap(/(?:\\+?\\d{1,3}[\\s.-]?)?(?:\\(?\\d{3}\\)?[\\s.-]?)\\d{3}[\\s.-]\\d{4}\\b/g, 'PHONE', 'phone');\n  out = out.replace(/\\b(?:\\d[ -]*?){13,19}\\b/g, (match) => {\n    const digits = match.replace(/\\D/g, '');\n    if (digits.length < 13 || digits.length > 19 || !luhnOk(digits)) return match;\n    counts.card += 1;\n    return '[CARD_' + counts.card + ']';\n  });\n  return { text: out, counts };\n}\n\nconst results = [];\nfor (const item of $input.all()) {\n  const raw = item.json.body && typeof item.json.body === 'object' ? item.json.body : item.json;\n  const original = String(raw.text || raw.body || raw.document || '');\n  const task = String(raw.task || 'Summarize the document for an internal reader. Do not guess redacted values.');\n  const redacted = redact(original.slice(0, 20000));\n  results.push({\n    json: {\n      task,\n      redactedText: redacted.text,\n      redactionCounts: redacted.counts,\n      originalLength: original.length,\n    },\n  });\n}\nreturn results;\n"
+      },
+      "id": "f0fad5b0-298a-43aa-9cfa-259a5abd7c69",
+      "name": "Redact PII",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Do the task using only the redacted document. Tokens such as [EMAIL_1] and [CARD_1] stand in for removed personal data. Never try to reconstruct them. If the task needs a removed value, say it was redacted.\n\nTask:\n{{ $json.task }}\n\nDocument:\n{{ $json.redactedText }}"
+      },
+      "id": "0c300e51-2e2c-4e67-a6fa-a090ee775a31",
+      "name": "Run Task On Redacted Text",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        520,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "options": {
+          "temperature": 0
+        }
+      },
+      "id": "6b7897ed-7617-4a95-9281-f9feeb184230",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        520,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const draft = $input.first().json;\nconst modelText = typeof draft.text === 'string' ? draft.text : (typeof draft.output === 'string' ? draft.output : JSON.stringify(draft));\nconst patterns = [\n  { name: 'email', re: /[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}/i },\n  { name: 'ssn', re: /\\b\\d{3}-\\d{2}-\\d{4}\\b/ },\n  { name: 'phone', re: /(?:\\+?\\d{1,3}[\\s.-]?)?(?:\\(?\\d{3}\\)?[\\s.-]?)\\d{3}[\\s.-]\\d{4}\\b/ },\n  { name: 'ipv4', re: /\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b/ },\n];\nconst leaks = patterns.filter((pattern) => pattern.re.test(modelText)).map((pattern) => pattern.name);\nconst prepared = $('Redact PII').first().json;\nif (leaks.length) {\n  return [{\n    json: {\n      blocked: true,\n      result: null,\n      leaks,\n      redactionCounts: prepared.redactionCounts,\n      reason: 'The model output still matched a personal-data pattern, so the text was dropped.',\n    },\n  }];\n}\nreturn [{\n  json: {\n    blocked: false,\n    result: modelText,\n    leaks: [],\n    redactionCounts: prepared.redactionCounts,\n    originalLength: prepared.originalLength,\n  },\n}];\n"
+      },
+      "id": "30072976-a88d-419b-abd0-a39bb6a0b5db",
+      "name": "Scan Model Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "57efd2ca-4801-436a-8c1e-04632a370911",
+              "leftValue": "={{ $json.blocked }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a9ccc91d-ba1c-4892-b190-6d84890e6f61",
+      "name": "Output clean?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1040,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "e1ba4f38-1226-48db-b869-45d40e706604",
+      "name": "Return Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1300,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "5e0de12d-5ce7-4d0f-9533-416969934493",
+      "name": "Return Blocked",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1300,
+        440
+      ]
+    }
+  ],
+  "connections": {
+    "Document Webhook": {
+      "main": [
+        [
+          {
+            "node": "Redact PII",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redact PII": {
+      "main": [
+        [
+          {
+            "node": "Run Task On Redacted Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Run Task On Redacted Text",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Task On Redacted Text": {
+      "main": [
+        [
+          {
+            "node": "Scan Model Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scan Model Output": {
+      "main": [
+        [
+          {
+            "node": "Output clean?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Output clean?": {
+      "main": [
+        [
+          {
+            "node": "Return Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Blocked",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "active": false
+}
