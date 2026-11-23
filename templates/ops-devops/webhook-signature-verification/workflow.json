@@ -1,0 +1,236 @@
+{
+  "name": "Webhook signature verification",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Verify HMAC\n\nSelect a Crypto credential on HMAC SHA256.\nHeader: X-Signature-256: sha256=<hex of the raw body>.\nRaw Body on the webhook must stay enabled.",
+        "height": 170,
+        "width": 460,
+        "color": 4
+      },
+      "id": "56f6e0ba-982b-54e5-abb6-3967921193ff",
+      "name": "Setup",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "signed-events",
+        "authentication": "none",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "a60311ba-2284-5521-abc0-10394a7b317d",
+      "name": "Signed webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "a60311ba-2284-5521-abc0-10394a7b317d"
+    },
+    {
+      "parameters": {
+        "action": "hmac",
+        "binaryData": true,
+        "binaryPropertyName": "data",
+        "type": "SHA256",
+        "encoding": "hex",
+        "dataPropertyName": "computedSignature"
+      },
+      "id": "ba224c97-0bb3-5203-8c9f-f1c3af373763",
+      "name": "HMAC SHA256",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 2,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "function headerValue(headers, name) {\n  const want = name.toLowerCase();\n  for (const key of Object.keys(headers || {})) {\n    if (String(key).toLowerCase() === want) return headers[key];\n  }\n  return '';\n}\n\nfunction same(left, right) {\n  const a = String(left);\n  const b = String(right);\n  const length = Math.max(a.length, b.length);\n  let diff = a.length === b.length ? 0 : 1;\n  for (let i = 0; i < length; i++) {\n    const ca = i < a.length ? a.charCodeAt(i) : 0;\n    const cb = i < b.length ? b.charCodeAt(i) : 0;\n    diff |= ca ^ cb;\n  }\n  return diff === 0;\n}\n\nconst headers = items[0].json.headers || {};\nconst provided = String(headerValue(headers, 'x-signature-256')).trim();\nconst computed = String(items[0].json.computedSignature || '').trim().toLowerCase();\nconst normalized = (provided.toLowerCase().startsWith('sha256=')\n  ? provided.slice('sha256='.length)\n  : provided).trim().toLowerCase();\nconst valid = computed.length > 0 && same(normalized, computed);\n\nconst output = {\n  valid,\n  reason: valid ? 'ok' : (provided ? 'signature mismatch' : 'missing signature header'),\n};\nif (valid) output.body = items[0].json.body;\n\nreturn [{ json: output }];\n"
+      },
+      "id": "e21b0652-90cc-5358-90e8-2cd2c160f1ec",
+      "name": "Check signature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        760,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "8e5ba671-13fd-59c1-9b5d-cd7dae05efc9",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "205522a6-39a1-52fa-916c-fc4349a3b116",
+      "name": "Signature valid",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1020,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "0baac137-c117-589a-a74c-f60755fa42e3",
+              "name": "body",
+              "value": "={{ $json.body }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fee66d0d-5ae2-5775-abb6-c06b9bf169d9",
+      "name": "Accepted event",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1280,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"ok\": true\n}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "4be66dbb-e0fb-56aa-8393-0455edea8116",
+      "name": "Respond 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1540,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"ok\": false\n}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "4393f802-7da2-560e-a769-9af33c146b0f",
+      "name": "Respond 401",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1280,
+        460
+      ]
+    }
+  ],
+  "connections": {
+    "Signed webhook": {
+      "main": [
+        [
+          {
+            "node": "HMAC SHA256",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HMAC SHA256": {
+      "main": [
+        [
+          {
+            "node": "Check signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check signature": {
+      "main": [
+        [
+          {
+            "node": "Signature valid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Signature valid": {
+      "main": [
+        [
+          {
+            "node": "Accepted event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 401",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Accepted event": {
+      "main": [
+        [
+          {
+            "node": "Respond 200",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
