@@ -1,0 +1,246 @@
+{
+  "name": "Google Sheets row to Jira",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Sheet row to Jira\n\nHeaders: Summary, Description, Priority, Issue Key, Status.\nSet the spreadsheet id on both Google nodes, and the Jira project and issue type ids.",
+        "height": 160,
+        "width": 480,
+        "color": 4
+      },
+      "id": "ef4f03fb-2116-55d5-9d10-2255f040411f",
+      "name": "Setup",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "triggerOAuth2",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "your-spreadsheet-id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "id",
+          "value": "0"
+        },
+        "event": "rowAdded",
+        "options": {}
+      },
+      "id": "b71900a2-6875-5ffe-94e7-192c625f01d3",
+      "name": "Google Sheets Trigger",
+      "type": "n8n-nodes-base.googleSheetsTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "2ab6308d-621a-5195-b9eb-e1c240cab5c2",
+              "leftValue": "={{ $json.Summary }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "db1e821d-1a92-5c85-905e-6bd03e9cf8ca",
+      "name": "Summary present",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        520,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jiraVersion": "cloud",
+        "resource": "issue",
+        "operation": "create",
+        "project": {
+          "__rl": true,
+          "mode": "id",
+          "value": "10000"
+        },
+        "issueType": {
+          "__rl": true,
+          "mode": "id",
+          "value": "10001"
+        },
+        "summary": "={{ $json.Summary }}",
+        "additionalFields": {
+          "description": "={{ 'Priority: ' + ($json.Priority || 'Unspecified') + '\\n\\n' + ($json.Description || '') }}"
+        }
+      },
+      "id": "813af561-cdfa-5eec-b6ee-64f7ec7e33ce",
+      "name": "Create Jira issue",
+      "type": "n8n-nodes-base.jira",
+      "typeVersion": 1,
+      "position": [
+        800,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "sheet",
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "your-spreadsheet-id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Inbox"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ $('Google Sheets Trigger').item.json.row_number }}",
+            "Issue Key": "={{ $json.key }}",
+            "Status": "Created"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            },
+            {
+              "id": "Summary",
+              "displayName": "Summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Description",
+              "displayName": "Description",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Priority",
+              "displayName": "Priority",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            },
+            {
+              "id": "Issue Key",
+              "displayName": "Issue Key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "1c5149d9-d071-5295-9544-b9228583845d",
+      "name": "Write issue key",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1080,
+        200
+      ]
+    }
+  ],
+  "connections": {
+    "Google Sheets Trigger": {
+      "main": [
+        [
+          {
+            "node": "Summary present",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summary present": {
+      "main": [
+        [
+          {
+            "node": "Create Jira issue",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Create Jira issue": {
+      "main": [
+        [
+          {
+            "node": "Write issue key",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
