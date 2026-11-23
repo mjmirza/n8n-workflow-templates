@@ -1,0 +1,480 @@
+{
+  "name": "Support ticket triage",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Support ticket triage\n\n1. Select credentials on the OpenAI, Slack, and Google Sheets nodes.\n2. In Config, paste the spreadsheet id and the Slack channel name (without a hash).\n3. Create a sheet whose first row is TicketId, ReceivedAt, RequesterEmail, Subject, Category, Priority, Team, Summary, NeedsHuman.\n4. Activate the workflow, then POST a ticket to the webhook path support-ticket-triage.",
+        "width": 400,
+        "height": 320,
+        "color": 4
+      },
+      "id": "0aa69c22-3097-489b-b0d2-b1fadef4d452",
+      "name": "Setup notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -420,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "support-ticket-triage",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "ddb1618e-88ff-43dc-8bc2-05ec45569c35",
+      "name": "Ticket Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        40,
+        280
+      ],
+      "webhookId": "54e60b66-d831-4f35-a9f4-f9e153ef5ab0"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "470fa1bb-21f6-4c25-9191-9f49dec8d982",
+              "name": "spreadsheetId",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "c5ecee1e-6cc7-4afc-89b5-cee6b74bc720",
+              "name": "sheetName",
+              "value": "Tickets",
+              "type": "string"
+            },
+            {
+              "id": "2049cb77-c3fd-47e0-8513-ec0672ed26f1",
+              "name": "slackChannel",
+              "value": "support-triage",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "9e236ccc-52e8-4158-a674-563e6e1b825a",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        280,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const results = [];\nfor (const item of $input.all()) {\n  const raw = item.json.body && typeof item.json.body === 'object' ? item.json.body : item.json;\n  const subject = String(raw.subject || raw.title || 'No subject').slice(0, 300);\n  const body = String(raw.body || raw.description || raw.message || '').slice(0, 8000);\n  const requesterEmail = String(raw.requesterEmail || raw.email || raw.from || '');\n  const ticketId = String(raw.ticketId || raw.id || $execution.id);\n  results.push({ json: { ticketId, requesterEmail, subject, body, receivedAt: new Date().toISOString() } });\n}\nreturn results;\n"
+      },
+      "id": "fe9fcfeb-ebf2-4987-865d-6467b3d4d781",
+      "name": "Normalize Ticket",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Classify this support ticket. Use only these categories: billing, technical, account, general. Use only these priorities: low, normal, high, urgent. Pick the team that should own it (billing, technical, account, or general). needsHuman is true when the customer is angry, asks for a supervisor, reports a charge they do not recognize, or the request is ambiguous.\n\nTicket id: {{ $json.ticketId }}\nFrom: {{ $json.requesterEmail }}\nSubject: {{ $json.subject }}\nBody:\n{{ $json.body }}",
+        "hasOutputParser": true
+      },
+      "id": "2f56aab4-8fb1-4382-89af-2da2480eeae7",
+      "name": "Classify Ticket",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [
+        760,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "options": {
+          "temperature": 0
+        }
+      },
+      "id": "e60e58af-2400-4ebb-90ef-37299e1e075e",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        760,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "schemaType": "fromJson",
+        "jsonSchemaExample": "{\n  \"category\": \"billing\",\n  \"priority\": \"high\",\n  \"team\": \"billing\",\n  \"summary\": \"Customer was charged twice for the April invoice.\",\n  \"needsHuman\": true\n}"
+      },
+      "id": "20524b18-4004-40fc-8a3f-eddd668e402b",
+      "name": "Triage Schema",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.2,
+      "position": [
+        980,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const allowedCategories = ['billing', 'technical', 'account', 'general'];\nconst allowedPriorities = ['low', 'normal', 'high', 'urgent'];\nconst ticket = $('Normalize Ticket').first().json;\nconst raw = $input.first().json;\nconst parsed = raw.category ? raw : (raw.output || {});\nconst category = allowedCategories.includes(String(parsed.category || '').toLowerCase())\n  ? String(parsed.category).toLowerCase()\n  : 'general';\nconst priority = allowedPriorities.includes(String(parsed.priority || '').toLowerCase())\n  ? String(parsed.priority).toLowerCase()\n  : 'normal';\nconst team = allowedCategories.includes(String(parsed.team || '').toLowerCase())\n  ? String(parsed.team).toLowerCase()\n  : category;\nreturn [{\n  json: {\n    ...ticket,\n    category,\n    priority,\n    team,\n    summary: String(parsed.summary || ticket.subject).slice(0, 500),\n    needsHuman: parsed.needsHuman === true,\n  },\n}];\n"
+      },
+      "id": "59424ac6-bfa2-413f-a3af-b5c885b3cb34",
+      "name": "Validate Classification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1020,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "865d0921-b950-450c-97c2-963b0d311428",
+              "leftValue": "={{ $json.priority }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "urgent"
+            },
+            {
+              "id": "f895d883-6a07-4ab8-b311-dd713fc5d777",
+              "leftValue": "={{ $json.priority }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "high"
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "fbcc2124-1ad8-4eaf-b2ce-ba235b1210e7",
+      "name": "Urgent or high?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1260,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "accessToken",
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "={{ $('Config').item.json.slackChannel }}"
+        },
+        "text": "=*{{ $json.priority }}* {{ $json.category }} ticket {{ $json.ticketId }}\nFrom: {{ $json.requesterEmail }}\n*{{ $json.subject }}*\n{{ $json.summary }}\nTeam: {{ $json.team }} | Needs a person: {{ $json.needsHuman }}",
+        "otherOptions": {}
+      },
+      "id": "3328510f-17cc-45c2-b2d8-bf27fa85a201",
+      "name": "Alert Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        1520,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config').item.json.spreadsheetId }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $('Config').item.json.sheetName }}",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "TicketId": "={{ $('Validate Classification').item.json.ticketId }}",
+            "ReceivedAt": "={{ $('Validate Classification').item.json.receivedAt }}",
+            "RequesterEmail": "={{ $('Validate Classification').item.json.requesterEmail }}",
+            "Subject": "={{ $('Validate Classification').item.json.subject }}",
+            "Category": "={{ $('Validate Classification').item.json.category }}",
+            "Priority": "={{ $('Validate Classification').item.json.priority }}",
+            "Team": "={{ $('Validate Classification').item.json.team }}",
+            "Summary": "={{ $('Validate Classification').item.json.summary }}",
+            "NeedsHuman": "={{ $('Validate Classification').item.json.needsHuman }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "TicketId",
+              "displayName": "TicketId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ReceivedAt",
+              "displayName": "ReceivedAt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "RequesterEmail",
+              "displayName": "RequesterEmail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Subject",
+              "displayName": "Subject",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Category",
+              "displayName": "Category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Priority",
+              "displayName": "Priority",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Team",
+              "displayName": "Team",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Summary",
+              "displayName": "Summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "NeedsHuman",
+              "displayName": "NeedsHuman",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "395f04b1-c504-4caf-ba8e-527705e7d9db",
+      "name": "Log Ticket",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1760,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($('Validate Classification').item.json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "6ffe9e59-46b9-4aa2-9dce-b8716c254932",
+      "name": "Reply to caller",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2000,
+        280
+      ]
+    }
+  ],
+  "connections": {
+    "Ticket Webhook": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Normalize Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Ticket": {
+      "main": [
+        [
+          {
+            "node": "Classify Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Classify Ticket",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Triage Schema": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "Classify Ticket",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Ticket": {
+      "main": [
+        [
+          {
+            "node": "Validate Classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Classification": {
+      "main": [
+        [
+          {
+            "node": "Urgent or high?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Urgent or high?": {
+      "main": [
+        [
+          {
+            "node": "Alert Slack",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Ticket": {
+      "main": [
+        [
+          {
+            "node": "Reply to caller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "active": false
+}
