@@ -1,0 +1,361 @@
+{
+  "name": "Meeting follow-up tasks from Google Calendar",
+  "nodes": [
+    {
+      "id": "e1b810c9-9957-4ea7-8c07-770d6b999fb3",
+      "name": "Setup notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -420,
+        40
+      ],
+      "parameters": {
+        "content": "## Meeting follow-up\n\nWeekdays 17:30. Today's calendar events that have already ended become a HubSpot task per external attendee. The same event and email is not tasked twice on the same day. Set internalDomain so coworkers are skipped.",
+        "height": 240,
+        "width": 380,
+        "color": 4
+      }
+    },
+    {
+      "id": "192820fc-f4c3-47d8-a295-319a7e4de5e5",
+      "name": "End of Day",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 30 17 * * 1-5"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "405b0447-6489-46c1-9aec-b27081d289e8",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        280,
+        300
+      ],
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f662847b-aacf-4cf7-858d-93498d38fc4f",
+              "name": "calendarId",
+              "value": "primary",
+              "type": "string"
+            },
+            {
+              "id": "b6d7df70-e415-436b-b37c-0f49641b033a",
+              "name": "internalDomain",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "57220c2c-b396-4139-a1e7-2ad2d152379e",
+              "name": "slackChannel",
+              "value": "#sales-meetings",
+              "type": "string"
+            },
+            {
+              "id": "4b1455ab-f74d-4191-8a24-10bb2e446f93",
+              "name": "leadStatus",
+              "value": "CONNECTED",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "3f41f6f2-89b3-4a39-a208-ee5436da5de3",
+      "name": "Today's Events",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        560,
+        300
+      ],
+      "parameters": {
+        "resource": "event",
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Settings').first().json.calendarId }}"
+        },
+        "returnAll": true,
+        "timeMin": "={{ $now.startOf('day').toISO() }}",
+        "timeMax": "={{ $now.endOf('day').toISO() }}",
+        "options": {
+          "singleEvents": true,
+          "orderBy": "startTime"
+        }
+      },
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": null,
+          "name": "Google Calendar account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "3ffcf690-19f5-4cec-a9bf-963a9133cb1c",
+      "name": "Expand Meetings",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        300
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const settings = $('Settings').first().json;\nconst internal = String(settings.internalDomain || '').toLowerCase().replace(/^@/, '');\nconst now = Date.now();\nconst staticData = $getWorkflowStaticData('global');\nif (!staticData.seen) staticData.seen = {};\nconst day = new Date().toISOString().slice(0, 10);\nconst out = [];\nfor (const item of $input.all()) {\n  const event = item.json;\n  if (!event || !event.id) continue;\n  const endRaw = (event.end && (event.end.dateTime || event.end.date)) || '';\n  const endMs = Date.parse(endRaw);\n  if (!Number.isFinite(endMs) || endMs > now) continue;\n  const startRaw = (event.start && (event.start.dateTime || event.start.date)) || '';\n  const attendees = Array.isArray(event.attendees) ? event.attendees : [];\n  for (const attendee of attendees) {\n    if (!attendee || !attendee.email) continue;\n    if (attendee.self || attendee.organizer || attendee.responseStatus === 'declined') continue;\n    const email = String(attendee.email).trim().toLowerCase();\n    const domain = email.split('@')[1] || '';\n    if (internal && domain === internal) continue;\n    const key = event.id + '|' + email + '|' + day;\n    if (staticData.seen[key]) continue;\n    staticData.seen[key] = Date.now();\n    const display = String(attendee.displayName || '').trim();\n    const parts = display.split(/\\s+/).filter(Boolean);\n    out.push({\n      json: {\n        email,\n        firstName: parts[0] || '',\n        lastName: parts.slice(1).join(' '),\n        company: '',\n        jobTitle: '',\n        phone: '',\n        website: '',\n        leadStatus: settings.leadStatus || '',\n        eventId: event.id,\n        eventTitle: event.summary || 'Meeting',\n        startTime: startRaw,\n        endTime: endRaw,\n        meetingLink: event.hangoutLink || '',\n        notes: event.description || '',\n      },\n    });\n  }\n}\nconst keepAfter = Date.now() - 20 * 24 * 60 * 60 * 1000;\nfor (const [key, seenAt] of Object.entries(staticData.seen)) {\n  if (typeof seenAt === 'number' && seenAt < keepAfter) delete staticData.seen[key];\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "e3a2a85b-da2c-4d67-8ea0-c5de47f30d88",
+      "name": "Upsert Attendee",
+      "type": "n8n-nodes-base.hubspot",
+      "typeVersion": 2.2,
+      "position": [
+        1120,
+        300
+      ],
+      "parameters": {
+        "authentication": "appToken",
+        "resource": "contact",
+        "operation": "upsert",
+        "email": "={{ $json.email }}",
+        "additionalFields": {
+          "firstName": "={{ $json.firstName }}",
+          "lastName": "={{ $json.lastName }}",
+          "companyName": "={{ $json.company }}",
+          "jobTitle": "={{ $json.jobTitle }}",
+          "phoneNumber": "={{ $json.phone }}",
+          "websiteUrl": "={{ $json.website }}",
+          "leadStatus": "={{ $json.leadStatus }}"
+        },
+        "options": {}
+      },
+      "credentials": {
+        "hubspotAppToken": {
+          "id": null,
+          "name": "HubSpot account"
+        }
+      }
+    },
+    {
+      "id": "f93e3de9-9af0-48f4-a6c8-c56d6c11688f",
+      "name": "Create Follow-up Task",
+      "type": "n8n-nodes-base.hubspot",
+      "typeVersion": 2.2,
+      "position": [
+        1400,
+        300
+      ],
+      "parameters": {
+        "authentication": "appToken",
+        "resource": "engagement",
+        "operation": "create",
+        "type": "task",
+        "dueDate": "={{ $now.plus({ days: 1 }).toISO() }}",
+        "metadata": {
+          "subject": "={{ 'Follow up: ' + $('Expand Meetings').item.json.eventTitle }}",
+          "body": "={{ 'Send a follow-up after ' + $('Expand Meetings').item.json.eventTitle + ' with ' + $('Expand Meetings').item.json.email + '.\\n' + ($('Expand Meetings').item.json.notes || '') }}",
+          "status": "NOT_STARTED",
+          "forObjectType": "CONTACT"
+        },
+        "additionalFields": {
+          "associations": {
+            "contactIds": "={{ $json.vid }}"
+          }
+        }
+      },
+      "credentials": {
+        "hubspotAppToken": {
+          "id": null,
+          "name": "HubSpot account"
+        }
+      }
+    },
+    {
+      "id": "fc42c85a-325e-44c2-afd5-f4bcb6c68cdf",
+      "name": "Collect Tasks",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        1680,
+        300
+      ],
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "tasks",
+        "include": "allFields",
+        "options": {}
+      }
+    },
+    {
+      "id": "21c02c1b-c99e-4a66-99c5-9e14277a4985",
+      "name": "Summarize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1940,
+        300
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const meetings = $('Expand Meetings').all().map((item) => item.json);\nconst lines = meetings.map((meeting) => '\u2022 ' + meeting.eventTitle + ' \u2014 ' + meeting.email);\nreturn [{ json: { slackText: '*Meeting follow-ups created* (' + meetings.length + ')\\n' + lines.join('\\n') } }];"
+      }
+    },
+    {
+      "id": "f36f0bb5-2911-4338-869c-a0a1f1887956",
+      "name": "Post Summary",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.5,
+      "position": [
+        2200,
+        300
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "={{ $('Settings').first().json.slackChannel }}"
+        },
+        "messageType": "text",
+        "text": "={{ $json.slackText }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": null,
+          "name": "Slack account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "End of Day": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Today's Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Today's Events": {
+      "main": [
+        [
+          {
+            "node": "Expand Meetings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expand Meetings": {
+      "main": [
+        [
+          {
+            "node": "Upsert Attendee",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Attendee": {
+      "main": [
+        [
+          {
+            "node": "Create Follow-up Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Follow-up Task": {
+      "main": [
+        [
+          {
+            "node": "Collect Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Tasks": {
+      "main": [
+        [
+          {
+            "node": "Summarize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize": {
+      "main": [
+        [
+          {
+            "node": "Post Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "f61c4716-85be-4f2d-97fc-74118dc93604",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
