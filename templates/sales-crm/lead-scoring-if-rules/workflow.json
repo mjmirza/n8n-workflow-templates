@@ -1,0 +1,713 @@
+{
+  "name": "Lead scoring with IF tier rules",
+  "nodes": [
+    {
+      "id": "692c2fd7-655c-461e-8c41-3bdcad7f1195",
+      "name": "Setup notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -420,
+        40
+      ],
+      "parameters": {
+        "content": "## Lead scoring\n\nEdit hotThreshold and warmThreshold in Settings. Scoring rules live in Score Lead. Hot leads also post to Slack. Sheet tab: Scored Leads.",
+        "height": 220,
+        "width": 380,
+        "color": 4
+      }
+    },
+    {
+      "id": "ee4166c8-d61c-4edb-868d-f3b435219b70",
+      "name": "Lead Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "score-lead",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "webhookId": "d565c246-4389-4d96-b2f7-d35818754ad6"
+    },
+    {
+      "id": "4e55419b-cb21-4374-a1d9-bd270f95eda0",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        260,
+        300
+      ],
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6690b4de-124d-4cc7-90e0-28fce10c4c60",
+              "name": "spreadsheetId",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "2bd59ef4-7371-420c-988d-9fab623edff1",
+              "name": "slackChannel",
+              "value": "#sales-hot-leads",
+              "type": "string"
+            },
+            {
+              "id": "2540562d-eec7-47e0-8a55-5559ca82d9f6",
+              "name": "hotThreshold",
+              "value": 70,
+              "type": "number"
+            },
+            {
+              "id": "8be71825-e8de-4d26-bdac-7711972ffbf0",
+              "name": "warmThreshold",
+              "value": 40,
+              "type": "number"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "3b204d24-000c-42dd-a5f3-7e72ce193fbf",
+      "name": "Normalize Lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        300
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const sourceItem = $('Lead Webhook').first().json;\nconst raw = sourceItem.body && typeof sourceItem.body === 'object' ? sourceItem.body : sourceItem;\nconst pick = (...keys) => {\n  for (const key of keys) {\n    const value = raw[key];\n    if (value !== undefined && value !== null && String(value).trim() !== '') {\n      return String(value).trim();\n    }\n  }\n  return '';\n};\nlet firstName = pick('firstName', 'first_name', 'firstname');\nlet lastName = pick('lastName', 'last_name', 'lastname');\nconst fullName = pick('fullName', 'full_name', 'name');\nif (!firstName && fullName) {\n  const parts = fullName.split(/\\s+/).filter(Boolean);\n  firstName = parts.shift() || '';\n  lastName = lastName || parts.join(' ');\n}\nreturn [{\n  json: {\n    email: pick('email', 'Email', 'workEmail').toLowerCase(),\n    firstName,\n    lastName,\n    fullName: fullName || [firstName, lastName].filter(Boolean).join(' '),\n    company: pick('company', 'companyName', 'company_name', 'organization'),\n    jobTitle: pick('jobTitle', 'job_title', 'title'),\n    phone: pick('phone', 'phoneNumber', 'phone_number'),\n    website: pick('website', 'websiteUrl', 'companyWebsite'),\n    source: pick('source', 'utm_source', 'leadSource') || 'webhook',\n    pageUrl: pick('pageUrl', 'page_url', 'landingPage'),\n    message: pick('message', 'notes', 'comments'),\n    employeeCount: pick('employeeCount', 'employees', 'companySize'),\n    annualRevenue: pick('annualRevenue', 'revenue'),\n    receivedAt: new Date().toISOString(),\n  },\n}];"
+      }
+    },
+    {
+      "id": "69829acf-1943-4bcc-a8ab-e8c7ab500d8b",
+      "name": "Valid Email?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        780,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "d4711124-871b-4861-86ad-9ce53da47533",
+              "leftValue": "={{ $json.email }}",
+              "rightValue": "@",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "1752a940-889a-43a0-9693-94f0d522b2b9",
+      "name": "Score Lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        180
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const lead = $input.first().json;\nconst reasons = [];\nlet score = 0;\nconst title = String(lead.jobTitle || '').toLowerCase();\nif (/\\b(chief|ceo|cto|cfo|coo|cmo|founder|owner|partner)\\b/.test(title)) {\n  score += 35;\n  reasons.push('Executive title +35');\n} else if (/\\b(vp|vice president|head|director)\\b/.test(title)) {\n  score += 25;\n  reasons.push('Director or VP title +25');\n} else if (/\\b(manager|lead)\\b/.test(title)) {\n  score += 10;\n  reasons.push('Manager title +10');\n}\nconst employees = Number(lead.employeeCount || 0);\nif (employees >= 1000) {\n  score += 25;\n  reasons.push('1000+ employees +25');\n} else if (employees >= 200) {\n  score += 20;\n  reasons.push('200+ employees +20');\n} else if (employees >= 50) {\n  score += 12;\n  reasons.push('50+ employees +12');\n} else if (employees > 0) {\n  score += 4;\n  reasons.push('Company size provided +4');\n}\nconst revenue = Number(lead.annualRevenue || 0);\nif (revenue >= 10000000) {\n  score += 20;\n  reasons.push('Revenue 10M+ +20');\n} else if (revenue >= 1000000) {\n  score += 12;\n  reasons.push('Revenue 1M+ +12');\n}\nconst source = String(lead.source || '').toLowerCase();\nif (['referral', 'partner', 'customer'].includes(source)) {\n  score += 20;\n  reasons.push('High-intent source +20');\n} else if (['webinar', 'demo', 'event'].includes(source)) {\n  score += 12;\n  reasons.push('Engaged source +12');\n} else if (['paid', 'ads', 'linkedin'].includes(source)) {\n  score += 6;\n  reasons.push('Paid or social source +6');\n}\nif (String(lead.website || '').trim()) {\n  score += 5;\n  reasons.push('Company website present +5');\n}\nif (String(lead.phone || '').trim()) {\n  score += 5;\n  reasons.push('Phone present +5');\n}\nconst freeDomains = ['gmail.com', 'googlemail.com', 'yahoo.com', 'yahoo.co.uk', 'outlook.com', 'hotmail.com', 'live.com', 'icloud.com', 'aol.com', 'proton.me', 'protonmail.com', 'gmx.com', 'me.com'];\nconst domain = String(lead.email.split('@')[1] || '').toLowerCase();\nif (freeDomains.includes(domain)) {\n  score -= 15;\n  reasons.push('Free email domain -15');\n}\nif (lead.message && /budget|timeline|pricing|purchase|evaluating/i.test(lead.message)) {\n  score += 10;\n  reasons.push('Buying language in the message +10');\n}\nscore = Math.max(0, Math.min(100, score));\nreturn [{ json: { ...lead, score, domain, reasons: reasons.join('; ') } }];"
+      }
+    },
+    {
+      "id": "8a7c55e2-e14f-4267-acbb-98a3330ba2fc",
+      "name": "Is Hot?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1300,
+        180
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "3eed6f42-2b30-4b69-9050-a3063a1d9e56",
+              "leftValue": "={{ $json.score }}",
+              "rightValue": "={{ $('Settings').first().json.hotThreshold }}",
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "16cb4841-6c90-4ad9-92aa-81f1f9fc18c1",
+      "name": "Is Warm?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1300,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "260ed706-bb36-4307-b686-722423acd369",
+              "leftValue": "={{ $json.score }}",
+              "rightValue": "={{ $('Settings').first().json.warmThreshold }}",
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "89605b0d-6671-43da-afaa-968c9f26e2bb",
+      "name": "Mark Hot",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1560,
+        80
+      ],
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "55a55653-b96c-4ef9-9129-14aa2ac8de37",
+              "name": "tier",
+              "value": "hot",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "94452409-d868-4cef-9561-8104ad003e1d",
+      "name": "Mark Warm",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1560,
+        300
+      ],
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "3c63a3f4-13e4-447a-a472-6012d2381730",
+              "name": "tier",
+              "value": "warm",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "5637226c-beb0-477f-b5c2-3a43cc3d67c5",
+      "name": "Mark Cold",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1560,
+        520
+      ],
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "2f2666b5-9ba3-4ea5-99ae-361c4767276c",
+              "name": "tier",
+              "value": "cold",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "4f830914-e470-4dd8-bb5f-35656df4024c",
+      "name": "Notify Hot Lead",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.5,
+      "position": [
+        1820,
+        80
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "={{ $('Settings').first().json.slackChannel }}"
+        },
+        "messageType": "text",
+        "text": "={{ '*Hot lead ' + $json.score + '* ' + $json.fullName + ' at ' + $json.company + ' <' + $json.email + '>\\n' + $json.jobTitle + ' \u00b7 ' + $json.source + '\\n' + $json.reasons }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": null,
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "id": "530495fc-6c0f-4576-a4d9-41dddc0289df",
+      "name": "Append Scored Lead",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2080,
+        300
+      ],
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Settings').first().json.spreadsheetId }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Scored Leads"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Received At": "={{ $json.receivedAt }}",
+            "Email": "={{ $json.email }}",
+            "First Name": "={{ $json.firstName }}",
+            "Last Name": "={{ $json.lastName }}",
+            "Company": "={{ $json.company }}",
+            "Job Title": "={{ $json.jobTitle }}",
+            "Phone": "={{ $json.phone }}",
+            "Website": "={{ $json.website }}",
+            "Source": "={{ $json.source }}",
+            "Page URL": "={{ $json.pageUrl }}",
+            "Message": "={{ $json.message }}",
+            "Employee Count": "={{ $json.employeeCount }}",
+            "Annual Revenue": "={{ $json.annualRevenue }}",
+            "Score": "={{ $json.score }}",
+            "Tier": "={{ $json.tier }}",
+            "Reasons": "={{ $json.reasons }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Received At",
+              "displayName": "Received At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "First Name",
+              "displayName": "First Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Last Name",
+              "displayName": "Last Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Company",
+              "displayName": "Company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Job Title",
+              "displayName": "Job Title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Phone",
+              "displayName": "Phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Website",
+              "displayName": "Website",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Source",
+              "displayName": "Source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Page URL",
+              "displayName": "Page URL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Message",
+              "displayName": "Message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Employee Count",
+              "displayName": "Employee Count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Annual Revenue",
+              "displayName": "Annual Revenue",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Score",
+              "displayName": "Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Tier",
+              "displayName": "Tier",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Reasons",
+              "displayName": "Reasons",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": null,
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "56dbea0e-9e08-45c3-9b5e-2d083dc989e8",
+      "name": "Respond Scored",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        2360,
+        300
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, email: $('Score Lead').first().json.email, score: $('Score Lead').first().json.score, tier: $('Score Lead').first().json.score >= $('Settings').first().json.hotThreshold ? 'hot' : ($('Score Lead').first().json.score >= $('Settings').first().json.warmThreshold ? 'warm' : 'cold'), reasons: $('Score Lead').first().json.reasons }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "076499c3-d91b-4fe9-ad42-26df967208ff",
+      "name": "Respond Invalid",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1040,
+        460
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, error: \"A valid email is required.\" }) }}",
+        "options": {
+          "responseCode": 422
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Lead Webhook": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Normalize Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Lead": {
+      "main": [
+        [
+          {
+            "node": "Valid Email?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid Email?": {
+      "main": [
+        [
+          {
+            "node": "Score Lead",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Invalid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score Lead": {
+      "main": [
+        [
+          {
+            "node": "Is Hot?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Hot?": {
+      "main": [
+        [
+          {
+            "node": "Mark Hot",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Warm?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Warm?": {
+      "main": [
+        [
+          {
+            "node": "Mark Warm",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Cold",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Hot": {
+      "main": [
+        [
+          {
+            "node": "Append Scored Lead",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Notify Hot Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Warm": {
+      "main": [
+        [
+          {
+            "node": "Append Scored Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Cold": {
+      "main": [
+        [
+          {
+            "node": "Append Scored Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append Scored Lead": {
+      "main": [
+        [
+          {
+            "node": "Respond Scored",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "b0818dd8-528f-4be2-a235-113e7b8d1c98",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
