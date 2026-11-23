@@ -1,0 +1,553 @@
+{
+  "name": "HubSpot contact dedupe",
+  "nodes": [
+    {
+      "id": "89d5be8e-53c3-4b04-b803-26d221b8fbff",
+      "name": "Setup notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -420,
+        40
+      ],
+      "parameters": {
+        "content": "## Contact dedupe\n\nSearch HubSpot by email. Create when missing, update when the payload changes a tracked field, skip when it matches. Every decision is appended to the Dedupe Log sheet.",
+        "height": 220,
+        "width": 380,
+        "color": 4
+      }
+    },
+    {
+      "id": "1f0ebeb6-6cbe-41b0-9396-4810165eae5b",
+      "name": "Contact Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "crm-contact",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "webhookId": "dcf4d687-aacd-4c37-832f-74ee7e440349"
+    },
+    {
+      "id": "d42d8cd7-ba0e-46f5-b821-c4345116d716",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        260,
+        300
+      ],
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f3ab69cd-324b-4f6c-9ada-5f429db7dcff",
+              "name": "spreadsheetId",
+              "value": "",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "9dae0941-8e01-40f5-8659-ecf293824a9c",
+      "name": "Normalize Contact",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        300
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const sourceItem = $('Contact Webhook').first().json;\nconst raw = sourceItem.body && typeof sourceItem.body === 'object' ? sourceItem.body : sourceItem;\nconst pick = (...keys) => {\n  for (const key of keys) {\n    const value = raw[key];\n    if (value !== undefined && value !== null && String(value).trim() !== '') {\n      return String(value).trim();\n    }\n  }\n  return '';\n};\nlet firstName = pick('firstName', 'first_name', 'firstname');\nlet lastName = pick('lastName', 'last_name', 'lastname');\nconst fullName = pick('fullName', 'full_name', 'name');\nif (!firstName && fullName) {\n  const parts = fullName.split(/\\s+/).filter(Boolean);\n  firstName = parts.shift() || '';\n  lastName = lastName || parts.join(' ');\n}\nreturn [{\n  json: {\n    email: pick('email', 'Email', 'workEmail').toLowerCase(),\n    firstName,\n    lastName,\n    fullName: fullName || [firstName, lastName].filter(Boolean).join(' '),\n    company: pick('company', 'companyName', 'company_name', 'organization'),\n    jobTitle: pick('jobTitle', 'job_title', 'title'),\n    phone: pick('phone', 'phoneNumber', 'phone_number'),\n    website: pick('website', 'websiteUrl', 'companyWebsite'),\n    source: pick('source', 'utm_source', 'leadSource') || 'webhook',\n    pageUrl: pick('pageUrl', 'page_url', 'landingPage'),\n    message: pick('message', 'notes', 'comments'),\n    employeeCount: pick('employeeCount', 'employees', 'companySize'),\n    annualRevenue: pick('annualRevenue', 'revenue'),\n    receivedAt: new Date().toISOString(),\n  },\n}];"
+      }
+    },
+    {
+      "id": "c7fd2fa0-ed68-4385-870f-961e647776ac",
+      "name": "Valid Email?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        780,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "42d7e5e2-c0ed-41a7-b395-aa30502f679b",
+              "leftValue": "={{ $json.email }}",
+              "rightValue": "@",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "3ded97e7-3dfd-4eee-af89-1404c75515c2",
+      "name": "Search HubSpot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1040,
+        180
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts/search",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotAppToken",
+        "options": {},
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ filterGroups: [{ filters: [{ propertyName: \"email\", operator: \"EQ\", value: $json.email }] }], properties: [\"email\", \"firstname\", \"lastname\", \"company\", \"phone\", \"jobtitle\", \"website\"], limit: 5 }) }}"
+      },
+      "credentials": {
+        "hubspotAppToken": {
+          "id": null,
+          "name": "HubSpot account"
+        }
+      }
+    },
+    {
+      "id": "419fad89-ca9d-499c-b0a8-45b05103b0e4",
+      "name": "Decide Action",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        180
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const incoming = $('Normalize Contact').first().json;\nconst results = Array.isArray($json.results) ? $json.results : [];\nconst existing = results[0];\nif (!existing) {\n  return [{ json: { ...incoming, action: 'create', reason: 'No HubSpot contact with this email', hubspotId: '', changes: '' } }];\n}\nconst props = existing.properties || {};\nconst pairs = [\n  ['firstName', 'firstname'],\n  ['lastName', 'lastname'],\n  ['company', 'company'],\n  ['jobTitle', 'jobtitle'],\n  ['phone', 'phone'],\n  ['website', 'website'],\n];\nconst changes = [];\nfor (const [field, propertyName] of pairs) {\n  const next = String(incoming[field] || '').trim();\n  const prev = String(props[propertyName] || '').trim();\n  if (next && next.toLowerCase() !== prev.toLowerCase()) {\n    changes.push(field + ': ' + (prev || '\u2205') + ' \u2192 ' + next);\n  }\n}\nif (changes.length === 0) {\n  return [{ json: { ...incoming, action: 'skip', reason: 'Contact exists and incoming fields match', hubspotId: existing.id, changes: '' } }];\n}\nreturn [{ json: { ...incoming, action: 'update', reason: 'Incoming values differ', hubspotId: existing.id, changes: changes.join('; ') } }];"
+      }
+    },
+    {
+      "id": "4395e9ec-e5c6-49cc-8876-4f0a85e56587",
+      "name": "Needs Write?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1580,
+        180
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "9ce14df3-4e56-40b8-abfb-71e65f8835ea",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "create",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "2eaae096-5c3a-4793-a0c6-78c6c75ebeac",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "update",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "87e4a305-a004-46f5-8ecd-d658932f9b78",
+      "name": "Upsert Contact",
+      "type": "n8n-nodes-base.hubspot",
+      "typeVersion": 2.2,
+      "position": [
+        1840,
+        60
+      ],
+      "parameters": {
+        "authentication": "appToken",
+        "resource": "contact",
+        "operation": "upsert",
+        "email": "={{ $json.email }}",
+        "additionalFields": {
+          "firstName": "={{ $json.firstName }}",
+          "lastName": "={{ $json.lastName }}",
+          "companyName": "={{ $json.company }}",
+          "jobTitle": "={{ $json.jobTitle }}",
+          "phoneNumber": "={{ $json.phone }}",
+          "websiteUrl": "={{ $json.website }}",
+          "leadStatus": "={{ $json.leadStatus }}"
+        },
+        "options": {}
+      },
+      "credentials": {
+        "hubspotAppToken": {
+          "id": null,
+          "name": "HubSpot account"
+        }
+      }
+    },
+    {
+      "id": "bee6ece9-664f-4fe1-8520-ca0f13bb5edf",
+      "name": "Keep Decision",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2100,
+        60
+      ],
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ec651005-7e63-4638-b69f-d9be4e5c030e",
+              "name": "action",
+              "value": "={{ $('Decide Action').item.json.action }}",
+              "type": "string"
+            },
+            {
+              "id": "9c77b64a-bb50-4d1a-b5f4-19b95443aace",
+              "name": "reason",
+              "value": "={{ $('Decide Action').item.json.reason }}",
+              "type": "string"
+            },
+            {
+              "id": "883184a9-84cf-418d-82f8-3387a47b2a4b",
+              "name": "changes",
+              "value": "={{ $('Decide Action').item.json.changes }}",
+              "type": "string"
+            },
+            {
+              "id": "b6ddb02f-8dc0-43e2-921e-6cdd1ea29bb4",
+              "name": "email",
+              "value": "={{ $('Decide Action').item.json.email }}",
+              "type": "string"
+            },
+            {
+              "id": "e47ac477-42f1-47b3-834c-a515642c5d24",
+              "name": "hubspotId",
+              "value": "={{ $json.vid || $('Decide Action').item.json.hubspotId }}",
+              "type": "string"
+            },
+            {
+              "id": "50023a99-f548-4b45-9d5a-274c0e0b03bc",
+              "name": "receivedAt",
+              "value": "={{ $('Decide Action').item.json.receivedAt }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "7505fb3a-20be-470c-bd1f-c8d504a34bb3",
+      "name": "Log Decision",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2360,
+        220
+      ],
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Settings').first().json.spreadsheetId }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Dedupe Log"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Received At": "={{ $json.receivedAt }}",
+            "Email": "={{ $json.email }}",
+            "Action": "={{ $json.action }}",
+            "Reason": "={{ $json.reason }}",
+            "Changes": "={{ $json.changes }}",
+            "HubSpot Id": "={{ $json.hubspotId }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Received At",
+              "displayName": "Received At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Action",
+              "displayName": "Action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Reason",
+              "displayName": "Reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Changes",
+              "displayName": "Changes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "HubSpot Id",
+              "displayName": "HubSpot Id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": null,
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "756781e1-52a9-4989-ad63-26091f5c5c07",
+      "name": "Respond Decision",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        2620,
+        220
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, email: $json.email, action: $json.action, reason: $json.reason, hubspotId: $json.hubspotId, changes: $json.changes }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "43e2030a-cdc9-4fb8-9c5d-88ec725db307",
+      "name": "Respond Invalid",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1040,
+        460
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, error: \"A valid email is required.\" }) }}",
+        "options": {
+          "responseCode": 422
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Contact Webhook": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Normalize Contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Contact": {
+      "main": [
+        [
+          {
+            "node": "Valid Email?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid Email?": {
+      "main": [
+        [
+          {
+            "node": "Search HubSpot",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Invalid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search HubSpot": {
+      "main": [
+        [
+          {
+            "node": "Decide Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decide Action": {
+      "main": [
+        [
+          {
+            "node": "Needs Write?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Write?": {
+      "main": [
+        [
+          {
+            "node": "Upsert Contact",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Contact": {
+      "main": [
+        [
+          {
+            "node": "Keep Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Keep Decision": {
+      "main": [
+        [
+          {
+            "node": "Log Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Decision": {
+      "main": [
+        [
+          {
+            "node": "Respond Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "b7f59500-0519-4360-aab9-cae3eb47d372",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
