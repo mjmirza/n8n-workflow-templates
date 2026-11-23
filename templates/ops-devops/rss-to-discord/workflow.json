@@ -1,0 +1,175 @@
+{
+  "name": "RSS to Discord",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## RSS to Discord\n\nReplace the feed URL, server id, and channel id.\nThe first run posts items from the last 24 hours only.",
+        "height": 160,
+        "width": 420,
+        "color": 4
+      },
+      "id": "4b64d2cc-c8d2-507a-b364-d37e461d5583",
+      "name": "Setup",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1,
+              "triggerAtMinute": 5
+            }
+          ]
+        }
+      },
+      "id": "3b1b573f-332d-5534-b245-9d025ce64785",
+      "name": "Hourly",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "bbe23ba6-dbb9-50ed-9117-09e87db960f3",
+              "name": "feedUrl",
+              "value": "https://hnrss.org/frontpage",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ac5a4da1-3f84-52f3-bf5c-130091f067e6",
+      "name": "Feed URL",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.feedUrl }}",
+        "options": {}
+      },
+      "id": "6f0ca9c6-dcc2-5a1c-a027-030effe5bd3e",
+      "name": "Read feed",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1.2,
+      "position": [
+        760,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nconst seen = new Set(staticData.seenLinks || []);\nconst initialized = staticData.initialized === true;\nconst cutoff = Date.now() - 24 * 60 * 60 * 1000;\nconst fresh = [];\n\nfor (const item of items) {\n  const link = item.json.link || item.json.guid || item.json.id;\n  if (!link) continue;\n  const published = Date.parse(item.json.isoDate || item.json.pubDate || '') || 0;\n  if (!initialized) {\n    seen.add(link);\n    if (published >= cutoff) fresh.push(item.json);\n    continue;\n  }\n  if (seen.has(link)) continue;\n  seen.add(link);\n  fresh.push(item.json);\n}\n\nstaticData.initialized = true;\nstaticData.seenLinks = Array.from(seen).slice(-300);\n\nreturn fresh.map((entry) => {\n  const title = entry.title || 'Untitled';\n  const link = entry.link || entry.guid || '';\n  let content = title + '\\n' + link;\n  if (content.length > 1900) content = content.slice(0, 1900);\n  return { json: { title, link, content, isoDate: entry.isoDate || entry.pubDate || '' } };\n});\n"
+      },
+      "id": "23b1a3ef-f2a7-5e9e-9d8c-5e25b8d5b9d4",
+      "name": "Keep unseen items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1020,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "botToken",
+        "resource": "message",
+        "operation": "send",
+        "guildId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "111111111111111111"
+        },
+        "sendTo": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "222222222222222222"
+        },
+        "content": "={{ $json.content }}",
+        "options": {}
+      },
+      "id": "755e1284-a283-554b-a859-98dcf02c9d85",
+      "name": "Send to Discord",
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Hourly": {
+      "main": [
+        [
+          {
+            "node": "Feed URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Feed URL": {
+      "main": [
+        [
+          {
+            "node": "Read feed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read feed": {
+      "main": [
+        [
+          {
+            "node": "Keep unseen items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Keep unseen items": {
+      "main": [
+        [
+          {
+            "node": "Send to Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
