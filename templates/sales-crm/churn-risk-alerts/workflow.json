@@ -1,0 +1,442 @@
+{
+  "name": "Churn-risk alerts from a customer sheet",
+  "nodes": [
+    {
+      "id": "7ef061bf-eb3b-4c44-9eaa-695d2f10cb66",
+      "name": "Setup notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -420,
+        40
+      ],
+      "parameters": {
+        "content": "## Churn risk\n\nWeekdays 08:30. Read the Customers tab, score each row, and alert only on medium (35+) and high (60+). High and medium rows are appended to Churn Alerts. One Slack message and one email cover the whole run.",
+        "height": 240,
+        "width": 380,
+        "color": 4
+      }
+    },
+    {
+      "id": "5ed9d5fb-11ef-4ec1-a06f-f6e8532cf43b",
+      "name": "Weekday Check",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 30 8 * * 1-5"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "5d30ba91-4dd1-4567-bd69-fe28c81c0ccf",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        280,
+        300
+      ],
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ae1ec0ee-08da-441f-b389-548c4618e08c",
+              "name": "spreadsheetId",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "c8e47e1f-8c9d-4844-b533-7d782ddafaa1",
+              "name": "slackChannel",
+              "value": "#customer-success",
+              "type": "string"
+            },
+            {
+              "id": "f82a5a89-19a4-4f77-922b-01fa82c11b63",
+              "name": "alertEmail",
+              "value": "",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "b613107e-1cfa-435c-9b53-b675b64f520c",
+      "name": "Read Customers",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        540,
+        300
+      ],
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Settings').first().json.spreadsheetId }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Customers"
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": null,
+          "name": "Google Sheets account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "e6adf43d-1d2d-4851-bbab-676618d1a82a",
+      "name": "Score Accounts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        300
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const rows = $input.all().map((item) => item.json).filter((row) => row && row.email);\nconst now = Date.now();\nconst scored = [];\nfor (const row of rows) {\n  const reasons = [];\n  let score = 0;\n  const lastLogin = Date.parse(row.last_login_at || row.lastLoginAt || '');\n  const daysSinceLogin = Number.isFinite(lastLogin) ? Math.floor((now - lastLogin) / 86400000) : null;\n  if (daysSinceLogin === null) {\n    score += 15;\n    reasons.push('No usable last login +15');\n  } else if (daysSinceLogin >= 45) {\n    score += 40;\n    reasons.push('No login in ' + daysSinceLogin + 'd +40');\n  } else if (daysSinceLogin >= 21) {\n    score += 25;\n    reasons.push('No login in ' + daysSinceLogin + 'd +25');\n  } else if (daysSinceLogin >= 10) {\n    score += 10;\n    reasons.push('No login in ' + daysSinceLogin + 'd +10');\n  }\n  const nps = row.nps === '' || row.nps === undefined || row.nps === null ? null : Number(row.nps);\n  if (nps !== null && Number.isFinite(nps)) {\n    if (nps <= 6) {\n      score += 25;\n      reasons.push('NPS ' + nps + ' +25');\n    } else if (nps <= 8) {\n      score += 8;\n      reasons.push('NPS ' + nps + ' +8');\n    }\n  }\n  const tickets = Number(row.open_tickets || row.openTickets || 0);\n  if (tickets >= 5) {\n    score += 20;\n    reasons.push(tickets + ' open tickets +20');\n  } else if (tickets >= 2) {\n    score += 10;\n    reasons.push(tickets + ' open tickets +10');\n  }\n  const plan = String(row.plan || '').toLowerCase();\n  if (plan === 'monthly' && daysSinceLogin !== null && daysSinceLogin >= 21) {\n    score += 10;\n    reasons.push('Monthly plan and idle +10');\n  }\n  const mrr = Number(row.mrr || 0);\n  if (mrr >= 2000 && score >= 25) {\n    score += 10;\n    reasons.push('High MRR with other risk +10');\n  }\n  score = Math.max(0, Math.min(100, score));\n  let tier = 'low';\n  if (score >= 60) tier = 'high';\n  else if (score >= 35) tier = 'medium';\n  if (tier === 'low') continue;\n  scored.push({\n    email: String(row.email).trim().toLowerCase(),\n    company: row.company || '',\n    plan,\n    mrr,\n    ownerEmail: row.owner_email || row.ownerEmail || '',\n    daysSinceLogin: daysSinceLogin === null ? '' : daysSinceLogin,\n    score,\n    tier,\n    reasons: reasons.join('; '),\n    alertedAt: new Date().toISOString(),\n  });\n}\nscored.sort((a, b) => b.score - a.score);\nreturn scored.map((row) => ({ json: row }));"
+      }
+    },
+    {
+      "id": "32403dbb-697b-4535-8cb4-26e052a28e37",
+      "name": "Log Alerts",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1080,
+        180
+      ],
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Settings').first().json.spreadsheetId }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Churn Alerts"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Alerted At": "={{ $json.alertedAt }}",
+            "Email": "={{ $json.email }}",
+            "Company": "={{ $json.company }}",
+            "Plan": "={{ $json.plan }}",
+            "MRR": "={{ $json.mrr }}",
+            "Days Since Login": "={{ $json.daysSinceLogin }}",
+            "Risk Score": "={{ $json.score }}",
+            "Risk Tier": "={{ $json.tier }}",
+            "Reasons": "={{ $json.reasons }}",
+            "Owner Email": "={{ $json.ownerEmail }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Alerted At",
+              "displayName": "Alerted At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Company",
+              "displayName": "Company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Plan",
+              "displayName": "Plan",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "MRR",
+              "displayName": "MRR",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Days Since Login",
+              "displayName": "Days Since Login",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Risk Score",
+              "displayName": "Risk Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Risk Tier",
+              "displayName": "Risk Tier",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Reasons",
+              "displayName": "Reasons",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Owner Email",
+              "displayName": "Owner Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": null,
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "38700d0a-feb0-4147-a0ba-8538acb33e9b",
+      "name": "Bundle Alerts",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        1080,
+        420
+      ],
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "accounts",
+        "include": "allFields",
+        "options": {}
+      }
+    },
+    {
+      "id": "50741b7e-8004-4110-bc55-e37d1f3978cb",
+      "name": "Write Digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        420
+      ],
+      "parameters": {
+        "language": "javaScript",
+        "mode": "runOnceForAllItems",
+        "jsCode": "const accounts = $json.accounts || [];\nconst high = accounts.filter((account) => account.tier === 'high');\nconst lines = accounts.map((account) => '\u2022 [' + account.tier + ' ' + account.score + '] ' + (account.company || account.email) + ' \u2014 ' + account.reasons);\nconst slackText = '*Churn risk* ' + accounts.length + ' account(s), ' + high.length + ' high\\n' + lines.join('\\n');\nconst html = '<h2>Churn risk</h2><p>' + accounts.length + ' account(s) at medium or high risk, ' + high.length + ' high.</p><ul>' + accounts.map((account) => '<li><strong>' + account.tier + ' ' + account.score + '</strong> \u2014 ' + (account.company || account.email) + ' (' + account.email + ', MRR ' + account.mrr + ')<br>' + account.reasons + '</li>').join('') + '</ul>';\nreturn [{\n  json: {\n    slackText,\n    subject: 'Churn risk: ' + high.length + ' high, ' + accounts.length + ' total',\n    html,\n    to: $('Settings').first().json.alertEmail,\n  },\n}];"
+      }
+    },
+    {
+      "id": "6c7d49e9-7a13-40ae-ae0b-00a35286e957",
+      "name": "Post Risk Digest",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.5,
+      "position": [
+        1600,
+        320
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "={{ $('Settings').first().json.slackChannel }}"
+        },
+        "messageType": "text",
+        "text": "={{ $json.slackText }}",
+        "otherOptions": {
+          "includeLinkToWorkflow": false
+        }
+      },
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": null,
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "id": "005b9c0e-7a92-413e-a521-bbacdd148225",
+      "name": "Email Risk Digest",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1600,
+        520
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "html",
+        "message": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": null,
+          "name": "Gmail account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Weekday Check": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Read Customers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Customers": {
+      "main": [
+        [
+          {
+            "node": "Score Accounts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score Accounts": {
+      "main": [
+        [
+          {
+            "node": "Log Alerts",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Bundle Alerts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bundle Alerts": {
+      "main": [
+        [
+          {
+            "node": "Write Digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Digest": {
+      "main": [
+        [
+          {
+            "node": "Post Risk Digest",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Email Risk Digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "925d2557-6fd2-409d-a7b0-fa1f5a75b6b7",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
