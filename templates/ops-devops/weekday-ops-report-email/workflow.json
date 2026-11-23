@@ -1,0 +1,196 @@
+{
+  "name": "Weekday ops report email",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Weekday ops report\n\nSet reportUrl, fromEmail, and toEmail on Report config.\nAttach SMTP credentials on Send report.",
+        "height": 150,
+        "width": 420,
+        "color": 4
+      },
+      "id": "edee1d12-4140-5282-8d1e-e58fee380ad5",
+      "name": "Setup",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "weeksInterval": 1,
+              "triggerAtDay": [
+                1,
+                2,
+                3,
+                4,
+                5
+              ],
+              "triggerAtHour": 8,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "7317a8f8-47af-5bcd-89b9-85e758b21303",
+      "name": "Weekdays 08:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "8641333e-d982-5f37-8417-6fdc13c708b2",
+              "name": "reportUrl",
+              "value": "https://status.example.com/api/v2/summary.json",
+              "type": "string"
+            },
+            {
+              "id": "a67779a2-48dc-5c2f-b57e-10d03396da9f",
+              "name": "fromEmail",
+              "value": "ops-reports@example.com",
+              "type": "string"
+            },
+            {
+              "id": "b63d9197-e24e-596f-9f89-f17dd590f81a",
+              "name": "toEmail",
+              "value": "oncall@example.com",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "bf17df85-ce7a-5585-83f8-410a2d5461a6",
+      "name": "Report config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        520,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.reportUrl }}",
+        "options": {
+          "timeout": 20000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "df90f593-0e25-5f8e-ab0a-8f0c2d4be68e",
+      "name": "Fetch status JSON",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const cfg = $('Report config').first().json;\nconst response = items[0].json;\nconst statusCode = response.statusCode;\nconst body = response.body && typeof response.body === 'object' ? response.body : {};\nconst lines = [\n  'Source: ' + cfg.reportUrl,\n  'HTTP status: ' + statusCode,\n  'Checked: ' + new Date().toISOString(),\n  '',\n];\nlet alert = typeof statusCode !== 'number' || statusCode < 200 || statusCode >= 300;\n\nif (body.status && body.status.description) {\n  lines.push('Overall: ' + body.status.description);\n  if (body.status.indicator && body.status.indicator !== 'none') alert = true;\n}\n\nif (Array.isArray(body.components)) {\n  lines.push('Components:');\n  for (const component of body.components) {\n    lines.push('- ' + component.name + ': ' + component.status);\n    if (component.status && component.status !== 'operational') alert = true;\n  }\n}\n\nif (Array.isArray(body.incidents) && body.incidents.length) {\n  lines.push('Incidents:');\n  for (const incident of body.incidents.slice(0, 10)) {\n    lines.push('- ' + incident.name + ' (' + incident.status + ')');\n  }\n  alert = true;\n}\n\nif (!body.components && !body.status) {\n  const dumped = JSON.stringify(body, null, 2) || String(response.body || '');\n  lines.push('Body:');\n  lines.push(dumped.slice(0, 4000));\n}\n\nreturn [{\n  json: {\n    subject: (alert ? 'ALERT' : 'OK') + ' ops report',\n    text: lines.join('\\n'),\n    fromEmail: cfg.fromEmail,\n    toEmail: cfg.toEmail,\n  },\n}];\n"
+      },
+      "id": "6526558b-3e47-5db6-8f6f-0054d81b554f",
+      "name": "Format report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "email",
+        "operation": "send",
+        "fromEmail": "={{ $json.fromEmail }}",
+        "toEmail": "={{ $json.toEmail }}",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "text",
+        "text": "={{ $json.text }}",
+        "options": {}
+      },
+      "id": "4590e455-b00d-5235-a875-5cf38246b8dd",
+      "name": "Send report",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1300,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Weekdays 08:00": {
+      "main": [
+        [
+          {
+            "node": "Report config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report config": {
+      "main": [
+        [
+          {
+            "node": "Fetch status JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch status JSON": {
+      "main": [
+        [
+          {
+            "node": "Format report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format report": {
+      "main": [
+        [
+          {
+            "node": "Send report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
